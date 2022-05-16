@@ -1,0 +1,30 @@
+{
+  "name": "cs174a-project",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "typescript": "^4.6.4",
+    "open-simplex-noise": "^2.5.0",
+    "gl-matrix": "^3.4.3"
+  },
+  "scripts": {
+    "start": "vite",
+    "build": "tsc && vite build"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "vite": "^2.9.9"
+  }
+}
