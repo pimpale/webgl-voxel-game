@@ -1,4 +1,4 @@
-import { RADIANS, vec3_norm, vec3_mul_cross, vec3, perspective_projection_matrix } from './utils';
+import { RADIANS, vec3_norm, vec3_mul_cross, vec3_add, vec3_scale, vec3, mat4_perspective, mat4_look_at} from './utils';
 
 
 const worldup: vec3 = [0.0, 1.0, 0.0];
@@ -43,7 +43,16 @@ class Camera {
 
   private canvas: HTMLCanvasElement;
 
+  private controlsEnabled: boolean;
   private fast: boolean;
+  private keys: {
+    w: boolean,
+    a: boolean,
+    s: boolean,
+    d: boolean,
+    space: boolean,
+    shift: boolean,
+  };
 
   constructor(loc: vec3, canvas: HTMLCanvasElement) {
     this.pos = loc;
@@ -51,20 +60,125 @@ class Camera {
     this.pitch = 0.0;
     this.yaw = RADIANS(-90.0);
     this.basis = makeCameraBasis(this.pitch, this.yaw);
+
+    this.controlsEnabled = false;
     this.fast = false;
+    this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
 
-    this.canvas.addEventListener("onkeydown", this.handleKeyDown);
-    this.canvas.addEventListener("onkeyup", this.handleKeyUp);
-  }
 
-  handleKeyDown = (e:Event) => {
-      this.
+    this.canvas.addEventListener("keydown", e => {
+      switch (e.key) {
+        case "w": {
+          this.keys.w = true;
+          break;
+        }
+        case "a": {
+          this.keys.a = true;
+          break;
+        }
+        case "s": {
+          this.keys.s = true;
+          break;
+        }
+        case "d": {
+          this.keys.d = true;
+          break;
+        }
+        case "Space": {
+          this.keys.space = true;
+          break;
+        }
+        case "Shift": {
+          this.keys.shift = true;
+          break;
+        }
+      }
+    });
+
+    this.canvas.addEventListener("keyup", e => {
+      switch (e.key) {
+        case "w": {
+          this.keys.w = false;
+          break;
+        }
+        case "a": {
+          this.keys.a = false;
+          break;
+        }
+        case "s": {
+          this.keys.s = false;
+          break;
+        }
+        case "d": {
+          this.keys.d = false;
+          break;
+        }
+        case "Space": {
+          this.keys.space = false;
+          break;
+        }
+        case "Shift": {
+          this.keys.shift = false;
+          break;
+        }
+      }
+    });
+
+    // grab pointer lock on click
+    this.canvas.addEventListener("onclick", e => {
+      this.canvas.requestPointerLock();
+    });
+
+    // controls are enabled if and only if pointer is locked
+    document.addEventListener('pointerlockchange', e => {
+      this.controlsEnabled = document.pointerLockElement === this.canvas;
+    });
+
+    // enable looking
+    this.canvas.addEventListener('mousemove', e => {
+      const rotscale = 0.01;
+
+      this.yaw += e.movementX * rotscale;
+      this.pitch -= e.movementY * rotscale;
+
+      // clamp camera->pitch between +/-89 degrees
+      this.pitch = Math.min(this.pitch, RADIANS(89.9));
+      this.pitch = Math.max(this.pitch, RADIANS(-89.9));
+
+      // rebuild basis vectors
+      this.basis = makeCameraBasis(this.pitch, this.yaw);
+    });
   }
 
   update = () => {
+    if (!this.controlsEnabled) {
+      return;
+    }
+
     let movscale = 0.02;
     if (this.fast) {
       movscale *= 2;
+    }
+
+    if (this.keys.w) {
+      const dir = vec3_norm(vec3_mul_cross(this.basis.right, worldup));
+      this.pos = vec3_add(this.pos, vec3_scale(dir, movscale));
+    }
+    if (this.keys.s) {
+      const dir = vec3_norm(vec3_mul_cross(this.basis.right, worldup));
+      this.pos = vec3_add(this.pos, vec3_scale(dir, -movscale));
+    }
+    if (this.keys.a) {
+      this.pos = vec3_add(this.pos, vec3_scale(this.basis.right, movscale));
+    }
+    if (this.keys.d) {
+      this.pos = vec3_add(this.pos, vec3_scale(this.basis.right, -movscale));
+    }
+    if (this.keys.shift) {
+      this.pos = vec3_add(this.pos, vec3_scale(worldup, movscale));
+    }
+    if (this.keys.space) {
+      this.pos = vec3_add(this.pos, vec3_scale(worldup, -movscale));
     }
   }
 
@@ -73,76 +187,13 @@ class Camera {
     const aspect_ratio = this.canvas.width / this.canvas.height;
     const projection = perspective_projection_matrix(fov, aspect_ratio, 0.01, 1000.0);
 
+    // the place we're looking at is in the opposite direction as front
+    const look_pos = vec3_add(this.pos, vec3_scale(this.basis.front, -1));
+
+    // calculate the view matrix by looking from our eye to center
+    const view = mat4_look_at(this.pos, look_pos, worldup);
+
+    // compute final matrix
+    return mat4_mul(projection, view);
   }
-};
-
-
-void updateCamera(Camera * camera, GLFWwindow * pWindow) {
-
-  if (glfwGetKey(pWindow, GLFW_KEY_TAB) == GLFW_PRESS) {
-    camera -> fast = !camera -> fast;
-  }
-
-  float movscale = 0.02f;
-  if (camera -> fast) {
-    movscale *= 10;
-  }
-
-  if (glfwGetKey(pWindow, GLFW_KEY_W) == GLFW_PRESS) {
-    vec3 delta_pos;
-    vec3_mul_cross(delta_pos, camera -> basis.right, worldup);
-    vec_norm(delta_pos, delta_pos);
-    vec3_scale(delta_pos, delta_pos, movscale);
-    vec3_add(camera -> pos, camera -> pos, delta_pos);
-  }
-  if (glfwGetKey(pWindow, GLFW_KEY_S) == GLFW_PRESS) {
-    vec3 delta_pos;
-    vec3_mul_cross(delta_pos, camera -> basis.right, worldup);
-    vec_norm(delta_pos, delta_pos);
-    vec3_scale(delta_pos, delta_pos, -movscale);
-    vec3_add(camera -> pos, camera -> pos, delta_pos);
-  }
-  if (glfwGetKey(pWindow, GLFW_KEY_A) == GLFW_PRESS) {
-    vec3 delta_pos;
-    vec3_scale(delta_pos, camera -> basis.right, movscale);
-    vec3_add(camera -> pos, camera -> pos, delta_pos);
-  }
-  if (glfwGetKey(pWindow, GLFW_KEY_D) == GLFW_PRESS) {
-    vec3 delta_pos;
-    vec3_scale(delta_pos, camera -> basis.right, -movscale);
-    vec3_add(camera -> pos, camera -> pos, delta_pos);
-  }
-  if (glfwGetKey(pWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(pWindow, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
-    vec3 delta_pos;
-    vec3_scale(delta_pos, worldup, movscale);
-    vec3_add(camera -> pos, camera -> pos, delta_pos);
-  }
-  if (glfwGetKey(pWindow, GLFW_KEY_SPACE) == GLFW_PRESS) {
-    vec3 delta_pos;
-    vec3_scale(delta_pos, worldup, -movscale);
-    vec3_add(camera -> pos, camera -> pos, delta_pos);
-  }
-
-  double x;
-  double y;
-  glfwGetCursorPos(pWindow, & x, & y);
-
-  double dX = x - camera -> pX;
-  double dY = y - camera -> pY;
-
-  camera -> pX = x;
-  camera -> pY = y;
-
-  float rotscale = 0.01f;
-
-  camera -> yaw += (float)dX * rotscale;
-  camera -> pitch -= (float)dY * rotscale;
-
-  // clamp camera->pitch between 89 degrees
-  camera -> pitch = fminf(camera -> pitch, RADIANS(89.9f));
-  camera -> pitch = fmaxf(camera -> pitch, RADIANS(-89.9f));
-
-  // rebuild basis vectors
-  camera -> basis = new_CameraBasis(camera -> pitch, camera -> yaw);
 }
-
