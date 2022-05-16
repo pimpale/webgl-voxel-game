@@ -165,7 +165,7 @@ class Game {
 
     // resize canvas on window
     this.resizeCanvas();
-    window.addEventListener('resize', this.resizeCanvas);
+    this.canvas.addEventListener('resize', this.resizeCanvas);
   }
 
   resizeCanvas = () => {

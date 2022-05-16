@@ -1,4 +1,4 @@
-import {RADIANS, vec_norm, vec3_mul_cross, vec3} from './utils';
+import { RADIANS, vec3_norm, vec3_mul_cross, vec3, perspective_projection_matrix } from './utils';
 
 
 const worldup: vec3 = [0.0, 1.0, 0.0];
@@ -9,68 +9,73 @@ export type CameraBasis = {
   up: vec3;
 }
 
-// The camera struct
-export type Camera = {
-  // global camera position
-  pos: vec3;
-  // pitch and yaw values in radians
-  pitch: number;
-  yaw: number;
-  // the camera's basis
-  basis: CameraBasis;
-};
-
 function makeCameraBasis(pitch: number, yaw: number) {
 
   // calculate front vector from yaw and pitch
   // note that front actually points in the opposite direction as the camera
   // view
-  const front: vec3 = [
+  const front: vec3 = vec3_norm([
     Math.cos(yaw) * Math.cos(pitch),
     Math.sin(pitch),
     Math.sin(yaw) * Math.cos(pitch),
-  ];
-
-  vec_norm(front);
+  ]);
 
   // calculate others from via gram schmidt process
-  const right  = vec3_mul_cross(front, worldup);
-  vec_norm(right);
+  const right = vec3_norm(vec3_mul_cross(front, worldup));
+  const up = vec3_norm(vec3_mul_cross(right, front));
 
-  const up = vec3_mul_cross(right, front);
-  vec_norm(up);
-
-  return {front, right, up};
+  return { front, right, up };
 }
 
-function calculate_projection_matrix(xsize:number, ysize:number) {
-  const fov = RADIANS(90.0);
-  const aspect_ratio = xsize / ysize;
-
-  // set near and far to 0.01 and 100.0 respectively
-  mat4x4_perspective(projection_matrix, fov, aspect_ratio, 0.01f, 1000.0f);
+function calculate_projection_matrix(xsize: number, ysize: number) {
 }
 
-Camera new_Camera(const vec3 loc, const VkExtent2D dimensions) {
-  Camera cam;
-vec3_dup(cam.pos, loc);
 
-cam.pitch = 0.0f;
-cam.yaw = RADIANS(-90.0f);
+// The camera struct
+class Camera {
+  // global camera position
+  private pos: vec3;
+  // pitch and yaw values in radians
+  private pitch: number;
+  private yaw: number;
+  // the camera's basis
+  private basis: CameraBasis;
 
-cam.basis = new_CameraBasis(cam.pitch, cam.yaw);
+  private canvas: HTMLCanvasElement;
 
-// set near and far to 0.01 and 100.0 respectively
-calculate_projection_matrix(cam.projection, dimensions);
+  private fast: boolean;
 
-cam.fast = false;
+  constructor(loc: vec3, canvas: HTMLCanvasElement) {
+    this.pos = loc;
+    this.canvas = canvas;
+    this.pitch = 0.0;
+    this.yaw = RADIANS(-90.0);
+    this.basis = makeCameraBasis(this.pitch, this.yaw);
+    this.fast = false;
 
-return cam;
-}
+    this.canvas.addEventListener("onkeydown", this.handleKeyDown);
+    this.canvas.addEventListener("onkeyup", this.handleKeyUp);
+  }
 
-void resizeCamera(Camera * camera, const VkExtent2D dimensions) {
-  calculate_projection_matrix(camera -> projection, dimensions);
-}
+  handleKeyDown = (e:Event) => {
+      this.
+  }
+
+  update = () => {
+    let movscale = 0.02;
+    if (this.fast) {
+      movscale *= 2;
+    }
+  }
+
+  getMvp = () => {
+    const fov = RADIANS(90.0);
+    const aspect_ratio = this.canvas.width / this.canvas.height;
+    const projection = perspective_projection_matrix(fov, aspect_ratio, 0.01, 1000.0);
+
+  }
+};
+
 
 void updateCamera(Camera * camera, GLFWwindow * pWindow) {
 
@@ -141,15 +146,3 @@ void updateCamera(Camera * camera, GLFWwindow * pWindow) {
   camera -> basis = new_CameraBasis(camera -> pitch, camera -> yaw);
 }
 
-void getMvpCamera(mat4x4 mvp, const Camera * camera) {
-  // the place we're looking at is in the opposite direction as front
-  vec3 look_pos;
-  vec3_sub(look_pos, camera -> pos, camera -> basis.front);
-
-  // calculate the view matrix by looking from our eye to center
-  mat4x4 view;
-  mat4x4_look_at(view, camera -> pos, look_pos, worldup);
-
-  // now set mvp to proj * view
-  mat4x4_mul(mvp, camera -> projection, view);
-}
