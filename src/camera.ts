@@ -1,4 +1,5 @@
-import { clamp, RADIANS, vec3_norm, vec3_mul_cross, vec3_add, vec3_scale, vec3, mat4, mat4_perspective, mat4_mul } from './utils';
+import { clamp, RADIANS, vec3_norm, vec3_cross, vec3_add, vec3_scale, vec3, mat4, mat4_perspective, mat4_mul, mat4_transpose, mat4_look_at, } from './utils';
+import { MatrixProd } from './utils';
 
 
 const worldup: vec3 = [0.0, 1.0, 0.0];
@@ -10,8 +11,6 @@ export class CameraBasis {
   constructor(pitch: number, yaw: number) {
 
     // calculate front vector from yaw and pitch
-    // note that front actually points in the opposite direction as the camera
-    // view
     this.front = vec3_norm([
       Math.cos(yaw) * Math.cos(pitch),
       Math.sin(pitch),
@@ -19,8 +18,8 @@ export class CameraBasis {
     ]);
 
     // calculate others from via gram schmidt process
-    this.right = vec3_norm(vec3_mul_cross(this.front, worldup));
-    this.up = vec3_norm(vec3_mul_cross(this.right, this.front));
+    this.right = vec3_norm(vec3_cross(this.front, worldup));
+    this.up = vec3_norm(vec3_cross(this.right, this.front));
   }
 }
 
@@ -76,7 +75,7 @@ class Camera {
           this.keys.d = true;
           break;
         }
-        case "Space": {
+        case " ": {
           this.keys.space = true;
           break;
         }
@@ -105,7 +104,7 @@ class Camera {
           this.keys.d = false;
           break;
         }
-        case "Space": {
+        case " ": {
           this.keys.space = false;
           break;
         }
@@ -134,7 +133,7 @@ class Camera {
 
       const rotscale = 0.001;
 
-      this.yaw -= e.movementX * rotscale;
+      this.yaw += e.movementX * rotscale;
       this.pitch += e.movementY * rotscale;
 
       // clamp camera->pitch between +/-89 degrees
@@ -155,13 +154,12 @@ class Camera {
       movscale *= 2;
     }
 
+    const forwarddir = vec3_norm(vec3_cross(this.basis.right, worldup));
     if (this.keys.w) {
-      const dir = vec3_norm(vec3_mul_cross(this.basis.right, worldup));
-      this.pos = vec3_add(this.pos, vec3_scale(dir, movscale));
+      this.pos = vec3_add(this.pos, vec3_scale(forwarddir, movscale));
     }
     if (this.keys.s) {
-      const dir = vec3_norm(vec3_mul_cross(this.basis.right, worldup));
-      this.pos = vec3_add(this.pos, vec3_scale(dir, -movscale));
+      this.pos = vec3_add(this.pos, vec3_scale(forwarddir, -movscale));
     }
     if (this.keys.a) {
       this.pos = vec3_add(this.pos, vec3_scale(this.basis.right, movscale));
@@ -170,10 +168,10 @@ class Camera {
       this.pos = vec3_add(this.pos, vec3_scale(this.basis.right, -movscale));
     }
     if (this.keys.shift) {
-      this.pos = vec3_add(this.pos, vec3_scale(worldup, movscale));
+      this.pos = vec3_add(this.pos, vec3_scale(worldup, -movscale));
     }
     if (this.keys.space) {
-      this.pos = vec3_add(this.pos, vec3_scale(worldup, -movscale));
+      this.pos = vec3_add(this.pos, vec3_scale(worldup, movscale));
     }
   }
 
@@ -182,32 +180,23 @@ class Camera {
   getMvp = () => {
     const fov = RADIANS(90.0);
     const aspect_ratio = this.canvas.width / this.canvas.height;
-    const projection = mat4_perspective(fov, aspect_ratio, 0.01, 1000.0);
+    const projection = mat4_perspective(fov, aspect_ratio, 0.001, 1000.0);
 
     // the place we're looking at is in the opposite direction as front
     const look_pos = vec3_add(this.pos, vec3_scale(this.basis.front, -1));
 
     // calculate the view matrix using our camera basis
-    const view: mat4 = [
-      [this.basis.right[0], this.basis.right[1], this.basis.right[2], 0],
-      [this.basis.up[0], this.basis.up[1], this.basis.up[2], 0],
-      [this.basis.front[0], this.basis.front[1], this.basis.front[2], 0],
-      [this.pos[0], this.pos[1], this.pos[2], 1],
-    ];
+    const view = mat4_look_at(this.pos, look_pos, worldup);
 
     this.q++;
-    if(this.q%1000 == 0) {
-        console.log("view");
-        console.log(view);
-        console.log("projection");
-        console.log(projection);
-        console.log("final");
-        console.log(mat4_mul(projection, view));
+    if (this.q % 100 == 0) {
+      console.log("pos");
+      console.log(this.pos);
     }
 
 
     // compute final matrix
-    return mat4_mul(projection, view);
+    return MatrixProd(projection, view);
   }
 }
 

@@ -82,11 +82,11 @@ class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
 
-    this.camera = new Camera([0,10,0], this.canvas);
+    this.camera = new Camera([0,0,0], this.canvas);
 
 
     this.gl = canvas.getContext('webgl2')!
-    //this.gl.enable(this.gl.DEPTH_TEST);
+    this.gl.enable(this.gl.DEPTH_TEST);
 
     const program = createProgram(
       this.gl,
