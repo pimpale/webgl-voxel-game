@@ -1,35 +1,28 @@
-import { RADIANS, vec3_norm, vec3_mul_cross, vec3_add, vec3_scale, vec3, mat4_perspective, mat4_look_at} from './utils';
+import { clamp, RADIANS, vec3_norm, vec3_mul_cross, vec3_add, vec3_scale, vec3, mat4, mat4_perspective, mat4_mul } from './utils';
 
 
 const worldup: vec3 = [0.0, 1.0, 0.0];
 
-export type CameraBasis = {
-  front: vec3;
-  right: vec3;
-  up: vec3;
+export class CameraBasis {
+  readonly front: vec3;
+  readonly right: vec3;
+  readonly up: vec3;
+  constructor(pitch: number, yaw: number) {
+
+    // calculate front vector from yaw and pitch
+    // note that front actually points in the opposite direction as the camera
+    // view
+    this.front = vec3_norm([
+      Math.cos(yaw) * Math.cos(pitch),
+      Math.sin(pitch),
+      Math.sin(yaw) * Math.cos(pitch),
+    ]);
+
+    // calculate others from via gram schmidt process
+    this.right = vec3_norm(vec3_mul_cross(this.front, worldup));
+    this.up = vec3_norm(vec3_mul_cross(this.right, this.front));
+  }
 }
-
-function makeCameraBasis(pitch: number, yaw: number) {
-
-  // calculate front vector from yaw and pitch
-  // note that front actually points in the opposite direction as the camera
-  // view
-  const front: vec3 = vec3_norm([
-    Math.cos(yaw) * Math.cos(pitch),
-    Math.sin(pitch),
-    Math.sin(yaw) * Math.cos(pitch),
-  ]);
-
-  // calculate others from via gram schmidt process
-  const right = vec3_norm(vec3_mul_cross(front, worldup));
-  const up = vec3_norm(vec3_mul_cross(right, front));
-
-  return { front, right, up };
-}
-
-function calculate_projection_matrix(xsize: number, ysize: number) {
-}
-
 
 // The camera struct
 class Camera {
@@ -59,14 +52,13 @@ class Camera {
     this.canvas = canvas;
     this.pitch = 0.0;
     this.yaw = RADIANS(-90.0);
-    this.basis = makeCameraBasis(this.pitch, this.yaw);
+    this.basis = new CameraBasis(this.pitch, this.yaw);
 
     this.controlsEnabled = false;
     this.fast = false;
     this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
 
-
-    this.canvas.addEventListener("keydown", e => {
+    window.addEventListener("keydown", e => {
       switch (e.key) {
         case "w": {
           this.keys.w = true;
@@ -95,7 +87,7 @@ class Camera {
       }
     });
 
-    this.canvas.addEventListener("keyup", e => {
+    window.addEventListener("keyup", e => {
       switch (e.key) {
         case "w": {
           this.keys.w = false;
@@ -125,7 +117,7 @@ class Camera {
     });
 
     // grab pointer lock on click
-    this.canvas.addEventListener("onclick", e => {
+    this.canvas.addEventListener("click", e => {
       this.canvas.requestPointerLock();
     });
 
@@ -136,17 +128,20 @@ class Camera {
 
     // enable looking
     this.canvas.addEventListener('mousemove', e => {
-      const rotscale = 0.01;
+      if (!this.controlsEnabled) {
+        return;
+      }
 
-      this.yaw += e.movementX * rotscale;
-      this.pitch -= e.movementY * rotscale;
+      const rotscale = 0.001;
+
+      this.yaw -= e.movementX * rotscale;
+      this.pitch += e.movementY * rotscale;
 
       // clamp camera->pitch between +/-89 degrees
-      this.pitch = Math.min(this.pitch, RADIANS(89.9));
-      this.pitch = Math.max(this.pitch, RADIANS(-89.9));
+      this.pitch = clamp(this.pitch, RADIANS(-89.9), RADIANS(89.9));
 
       // rebuild basis vectors
-      this.basis = makeCameraBasis(this.pitch, this.yaw);
+      this.basis = new CameraBasis(this.pitch, this.yaw);
     });
   }
 
@@ -182,18 +177,38 @@ class Camera {
     }
   }
 
+  q = 0;
+
   getMvp = () => {
     const fov = RADIANS(90.0);
     const aspect_ratio = this.canvas.width / this.canvas.height;
-    const projection = perspective_projection_matrix(fov, aspect_ratio, 0.01, 1000.0);
+    const projection = mat4_perspective(fov, aspect_ratio, 0.01, 1000.0);
 
     // the place we're looking at is in the opposite direction as front
     const look_pos = vec3_add(this.pos, vec3_scale(this.basis.front, -1));
 
-    // calculate the view matrix by looking from our eye to center
-    const view = mat4_look_at(this.pos, look_pos, worldup);
+    // calculate the view matrix using our camera basis
+    const view: mat4 = [
+      [this.basis.right[0], this.basis.right[1], this.basis.right[2], 0],
+      [this.basis.up[0], this.basis.up[1], this.basis.up[2], 0],
+      [this.basis.front[0], this.basis.front[1], this.basis.front[2], 0],
+      [this.pos[0], this.pos[1], this.pos[2], 1],
+    ];
+
+    this.q++;
+    if(this.q%1000 == 0) {
+        console.log("view");
+        console.log(view);
+        console.log("projection");
+        console.log(projection);
+        console.log("final");
+        console.log(mat4_mul(projection, view));
+    }
+
 
     // compute final matrix
     return mat4_mul(projection, view);
   }
 }
+
+export default Camera

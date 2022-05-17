@@ -1,6 +1,7 @@
 import { makeNoise4D } from 'open-simplex-noise';
 import { createShader, createProgram } from './webgl';
-import { TrackballCamera } from './camera';
+import Camera from './camera';
+import {vec2, mat4_to_uniform} from './utils';
 
 const vs = `#version 300 es
 precision highp float;
@@ -14,7 +15,7 @@ out vec3 v_color;
 
 void main() {
    v_color = a_color;
-   gl_Position = u_mvpMat * vec4(a_position - vec3(0.5, 0.5, 0.5), 1.0);
+   gl_Position = u_mvpMat * vec4(a_position, 1.0);
 }
 `;
 
@@ -29,7 +30,6 @@ void main() {
 }
 `;
 
-import { vec2 } from 'gl-matrix';
 function genPlane(xseg: number, yseg: number): vec2[] {
 
   let vertexes: vec2[] = [];
@@ -44,13 +44,13 @@ function genPlane(xseg: number, yseg: number): vec2[] {
       // add two triangles
 
       // upper triangle
-      vertexes.push(vec2.fromValues(x, y));
-      vertexes.push(vec2.fromValues(nx, y));
-      vertexes.push(vec2.fromValues(x, ny));
+      vertexes.push([x, y]);
+      vertexes.push([nx, y]);
+      vertexes.push([x, ny]);
       // lower triangle
-      vertexes.push(vec2.fromValues(nx, y));
-      vertexes.push(vec2.fromValues(nx, ny));
-      vertexes.push(vec2.fromValues(x, ny));
+      vertexes.push([nx, y]);
+      vertexes.push([nx, ny]);
+      vertexes.push([x, ny]);
     }
   }
 
@@ -69,7 +69,7 @@ function convertColor(color: number) {
 class Game {
 
   private canvas: HTMLCanvasElement;
-  private camera: TrackballCamera;
+  private camera: Camera;
 
   private gl: WebGL2RenderingContext;
 
@@ -82,12 +82,11 @@ class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
 
-
-    this.camera = new TrackballCamera(canvas, {});
+    this.camera = new Camera([0,10,0], this.canvas);
 
 
     this.gl = canvas.getContext('webgl2')!
-    this.gl.enable(this.gl.DEPTH_TEST);
+    //this.gl.enable(this.gl.DEPTH_TEST);
 
     const program = createProgram(
       this.gl,
@@ -182,8 +181,8 @@ class Game {
 
     {
       // set uniform
-      const mvpMat = this.camera.getTrackballCameraMatrix(this.gl.canvas.width, this.gl.canvas.height);
-      this.gl.uniformMatrix4fv(this.mvpMatLoc, false, mvpMat);
+      const mvpMat = this.camera.getMvp();
+      this.gl.uniformMatrix4fv(this.mvpMatLoc, false, mat4_to_uniform(mvpMat));
 
       // draw triangles
       this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.filledbuffer);
