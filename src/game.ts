@@ -134,8 +134,6 @@ class Game {
       this.gl.STATIC_DRAW
     );
 
-
-
     // setup our attributes to tell WebGL how to pull
     // the data from the buffer above to the position attribute
     this.gl.enableVertexAttribArray(positionLoc);

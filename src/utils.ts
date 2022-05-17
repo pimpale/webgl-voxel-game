@@ -92,15 +92,6 @@ export function mat4_look_at(eye: vec3, at: vec3, up: vec3) {
   return mat4_mul(translation, rotation)
 }
 
-export function mat4_identity(): mat4 {
-  return [
-    [1, 0, 0, 0],
-    [0, 1, 0, 0],
-    [0, 0, 1, 0],
-    [0, 0, 0, 1]
-  ];
-}
-
 export function mat4_translation(x: number, y: number, z: number): mat4 {
   return [
     [1, 0, 0, x],
@@ -125,15 +116,6 @@ export function mat4_mul(a: mat4, b: mat4): mat4 {
     [vec4_dot(a3, c0), vec4_dot(a3, c1), vec4_dot(a3, c2), vec4_dot(a3, c3)],
   ];
 }
-
-export const MatrixProd = (A: mat4, B: mat4) =>
-  A.map((row, i) =>
-    B[0].map((_, j) =>
-      row.reduce((acc, _, n) =>
-        acc + A[i][n] * B[n][j], 0
-      )
-    )
-  )
 
 export function mat4_to_uniform(m: mat4) {
   const [c0, c1, c2, c3] = mat4_transpose(m);

@@ -194,9 +194,8 @@ class Camera {
       console.log(this.pos);
     }
 
-
     // compute final matrix
-    return MatrixProd(projection, view);
+    return mat4_mul(projection, view);
   }
 }
 
