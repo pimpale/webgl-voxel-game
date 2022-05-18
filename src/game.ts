@@ -32,6 +32,10 @@ in vec2 v_uv;
 out vec4 v_outColor;
 
 void main() {
+
+  // TODO: start using textures instead of directly using the uv coordinates
+  // Also, use the uv coordinates to index into the texture
+
   v_outColor = vec4(v_uv, 0.0, 1.0);
 }
 `;

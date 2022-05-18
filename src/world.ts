@@ -18,7 +18,7 @@ const RENDER_RADIUS_Z = 2;
 type ChunkGraphics = {
     vao: WebGLVertexArrayObject,
     buffer: WebGLBuffer,
-    nTriangles: number
+    nVertexes: number
   }
 
 type Chunk = {
@@ -126,7 +126,7 @@ class World {
 
   makeChunkGraphics = (blocks: Uint16Array, offset: vec3) => {
     const vertexes = createMesh(blocks, offset);
-    const nTriangles = vertexes.length;
+    const nVertexes = vertexes.length;
 
     const data = vertexes.flatMap(v => [...v.position, ...v.uv]);
 
@@ -165,7 +165,7 @@ class World {
     return {
       vao,
       buffer,
-      nTriangles
+      nVertexes
     };
   }
 
@@ -175,6 +175,10 @@ class World {
   }
 
   update = () => {
+
+    // TODO: every frame, check if the camera's chunk location is equal to our chunk location
+    // if not so, run updateCameraLoc
+
     // generate at most MAX_CHUNKS_TO_GEN chunks
     let genned_chunks = 0;
     for (const coord of this.togenerate) {
@@ -213,12 +217,10 @@ class World {
       let chunk = this.chunk_map.get(coord);
       if (chunk !== undefined && chunk.graphics !== undefined) {
         this.gl.bindVertexArray(chunk.graphics.vao);
-        this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.nTriangles);
+        this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.nVertexes);
       }
     }
-
   }
-
 }
 
 

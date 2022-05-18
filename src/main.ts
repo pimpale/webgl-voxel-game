@@ -1,6 +1,5 @@
 import Game from './game';
 
-
 // setup canvas
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 

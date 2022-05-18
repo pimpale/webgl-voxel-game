@@ -10,18 +10,22 @@ type BlockDef = {
   transparent: true
 } | {
   transparent: false
-  id: string,
+  name: string,
 }
 
 export const DEFS: BlockDef[] = [
   // air
   { transparent: true },
   // grass
-  { transparent: false, id:"grass"},
+  { transparent: false, name:"grass"},
   // stone
-  { transparent: false, id:"stone"},
-
+  { transparent: false, name:"stone"},
 ];
+
+// TODO: create a const here that a texture atlas using the defs
+// Each row represents a block. The first row will be ignored, since air is transparent
+// The second row should be grass, and the third row should be stone.
+// Each row of the texture atlas should have 6 images, making it 16*6 pixels wide
 
 // The reason its 1/6 is that there are 6 faces on a cube.
 // The texture map tile takes up 1/6
