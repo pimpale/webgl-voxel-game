@@ -1,6 +1,6 @@
 import { makeNoise3D } from 'open-simplex-noise';
-
-import { vec3 } from './utils';
+import {Vertex} from './game';
+import { vec2, vec3 } from './utils';
 
 const CHUNK_X_SIZE = 16;
 const CHUNK_Y_SIZE = 16;
@@ -32,7 +32,7 @@ class World {
   // vector of the coordinates of chunks to unload
   private tounload: vec3[];
 
-  constructor(seed: number, centerLoc:vec3) {
+  constructor(seed: number, centerLoc: vec3) {
     this.seed = seed;
     this.noiseFn = makeNoise3D(seed);
     this.centerLoc = centerLoc;
@@ -45,6 +45,9 @@ class World {
   }
 
 
+  update = () => {
+
+  }
 
 
 }
@@ -56,19 +59,18 @@ function genChunkData(    //
 ): Uint16Array {
   // generate chunk, we need to give it the block coordinate to generate at
   const chunkOffset = [
-      worldChunkCoords[0] * CHUNK_X_SIZE,
-      worldChunkCoords[1] * CHUNK_Y_SIZE,
-      worldChunkCoords[2] * CHUNK_Z_SIZE
+    worldChunkCoords[0] * CHUNK_X_SIZE,
+    worldChunkCoords[1] * CHUNK_Y_SIZE,
+    worldChunkCoords[2] * CHUNK_Z_SIZE
   ];
 
   const blocks = new Uint16Array(CHUNK_X_SIZE * CHUNK_Y_SIZE * CHUNK_Z_SIZE);
-
 
   const scale1 = 20.0;
   for (let x = 0; x < CHUNK_X_SIZE; x++) {
     const off_x = x * CHUNK_Y_SIZE * CHUNK_Z_SIZE;
     for (let y = 0; y < CHUNK_Y_SIZE; y++) {
-      const off_xy = off_x + y * CHUNK_Y_SIZE;
+      const off_xy = off_x + y * CHUNK_Z_SIZE;
       for (let z = 0; z < CHUNK_Z_SIZE; z++) {
         // this is the offset within the blocks array to store the value
         const off_xyz = off_xy + z;
@@ -92,4 +94,121 @@ function genChunkData(    //
   }
 
   return blocks;
+}
+
+type BlockDef = {
+  transparent: boolean
+}
+
+function createMesh(
+  blocks: Uint16Array,
+  offset: vec3,
+  blockDefs: BlockDef[]
+) {
+  function index(x: number, y: number, z: number) {
+    return x * CHUNK_Y_SIZE * CHUNK_Z_SIZE + y * CHUNK_Z_SIZE + z;
+  }
+
+  const vertexes: Vertex[] = [];
+
+  for (let x = 0; x < CHUNK_X_SIZE; x++) {
+    for (let y = 0; y < CHUNK_Y_SIZE; y++) {
+      for (let z = 0; z < CHUNK_Z_SIZE; z++) {
+        const bi = blocks[index(x, y, z)];
+        // check that its not transparent
+        if (blockDefs[bi].transparent) {
+          continue;
+        }
+
+        // get chunk location
+        const fx = x + offset[0];
+        const fy = y + offset[1];
+        const fz = z + offset[2];
+
+        // calculate vertexes
+        const v000: vec3 = [fx + 0, fy + 0, fz + 0];
+        const v100: vec3 = [fx + 1, fy + 0, fz + 0];
+        const v001: vec3 = [fx + 0, fy + 0, fz + 1];
+        const v101: vec3 = [fx + 1, fy + 0, fz + 1];
+        const v010: vec3 = [fx + 0, fy + 1, fz + 0];
+        const v110: vec3 = [fx + 1, fy + 1, fz + 0];
+        const v011: vec3 = [fx + 0, fy + 1, fz + 1];
+        const v111: vec3 = [fx + 1, fy + 1, fz + 1];
+
+        const xoff = BLOCK_TILE_TEX_XSIZE;
+        const yoff = BLOCK_TILE_TEX_YSIZE;
+
+        // clang-format off
+
+        // left face
+        if (x == 0 || blockDefs[blocks[index(x - 1, y, z)]].transparent) {
+          const bx = BLOCK_TILE_TEX_XSIZE * Block_LEFT;
+          const by = BLOCK_TILE_TEX_YSIZE * bi;
+          vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
+          vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
+          vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
+          vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
+          vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
+          vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+        }
+        // right face
+        if (x == CHUNK_X_SIZE - 1 || blockDefs[blocks[index(x + 1, y, z)]].transparent) {
+          const bx = BLOCK_TILE_TEX_XSIZE * Block_RIGHT;
+          const by = BLOCK_TILE_TEX_YSIZE * bi;
+          vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
+          vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
+          vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
+          vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
+          vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
+          vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
+        }
+        // upper face
+        if (y == 0 || blockDefs[blocks[index(x, y - 1, z)]].transparent) {
+          const bx = BLOCK_TILE_TEX_XSIZE * Block_UP;
+          const by = BLOCK_TILE_TEX_YSIZE * bi;
+          vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
+          vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
+          vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
+          vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
+          vertexes.push({ position: v101, uv: [bx + xoff, by + yoff] });
+          vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
+        }
+        // lower face
+        if (y == CHUNK_Y_SIZE - 1 || blockDefs[blocks[index(x, y + 1, z)]].transparent) {
+          const bx = BLOCK_TILE_TEX_XSIZE * Block_DOWN;
+          const by = BLOCK_TILE_TEX_YSIZE * bi;
+          vertexes.push({ position: v010, uv: [bx + xoff, by + 0.00] });
+          vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
+          vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+          vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
+          vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
+          vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+        }
+        // back face
+        if (z == 0 || blockDefs[blocks[index(x, y, z - 1)]].transparent) {
+          const bx = BLOCK_TILE_TEX_XSIZE * Block_BACK;
+          const by = BLOCK_TILE_TEX_YSIZE * bi;
+          vertexes.push({ position: v000, uv: [bx + xoff, by + 0.00] });
+          vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
+          vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
+          vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
+          vertexes.push({ position: v110, uv: [bx + 0.00, by + yoff] });
+          vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
+        }
+        // front face
+        if (z == CHUNK_Z_SIZE - 1 || blockDefs[blocks[index(x, y, z + 1)]].transparent) {
+          const bx = BLOCK_TILE_TEX_XSIZE * Block_FRONT;
+          const by = BLOCK_TILE_TEX_YSIZE * bi;
+          vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
+          vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
+          vertexes.push({ position: v001, uv: [bx + 0.00, by + 0.00] });
+          vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
+          vertexes.push({ position: v111, uv: [bx + xoff, by + yoff] });
+          vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
+        }
+        // clang-format on
+      }
+    }
+  }
+  return vertexes;
 }

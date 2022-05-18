@@ -1,7 +1,12 @@
 import { makeNoise4D } from 'open-simplex-noise';
 import { createShader, createProgram } from './webgl';
 import Camera from './camera';
-import {vec2, mat4_to_uniform} from './utils';
+import {vec3, vec2, mat4_to_uniform} from './utils';
+
+export type Vertex = {
+  position: vec3,
+  uv: vec2,
+}
 
 const vs = `#version 300 es
 precision highp float;
