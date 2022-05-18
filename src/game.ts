@@ -6,27 +6,27 @@ import {vec2, mat4_to_uniform} from './utils';
 const vs = `#version 300 es
 precision highp float;
 layout(location=0) in vec3 a_position;
-layout(location=1) in vec3 a_color;
+layout(location=1) in vec2 a_uv;
 
 // premultiplied mvp matrix
 uniform mat4 u_mvpMat;
 
-out vec3 v_color;
+out vec2 v_uv;
 
 void main() {
-   v_color = a_color;
+   v_uv = a_uv;
    gl_Position = u_mvpMat * vec4(a_position, 1.0);
 }
 `;
 
 const fs = `#version 300 es
 precision highp float;
-in vec3 v_color;
+in vec2 v_uv;
 
 out vec4 v_outColor;
 
 void main() {
-  v_outColor = vec4(v_color, 1.0);
+  v_outColor = vec4(v_uv, 0.0, 1.0);
 }
 `;
 
@@ -98,7 +98,7 @@ class Game {
 
     // get attribute locations
     const positionLoc = this.gl.getAttribLocation(program, 'a_position');
-    const colorLoc = this.gl.getAttribLocation(program, 'a_color');
+    const uvLoc = this.gl.getAttribLocation(program, 'a_uv');
 
 
     const topcolor = convertColor(0x458588);
@@ -145,9 +145,9 @@ class Game {
       6 * 4,          // stride (0 = auto)
       0,              // offset
     );
-    this.gl.enableVertexAttribArray(colorLoc);
+    this.gl.enableVertexAttribArray(uvLoc);
     this.gl.vertexAttribPointer(
-      colorLoc,
+      uvLoc,
       3,              // size (num components)
       this.gl.FLOAT,  // type of data in buffer
       false,          // normalize

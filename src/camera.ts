@@ -175,8 +175,6 @@ class Camera {
     }
   }
 
-  q = 0;
-
   getMvp = () => {
     const fov = RADIANS(90.0);
     const aspect_ratio = this.canvas.width / this.canvas.height;
@@ -187,12 +185,6 @@ class Camera {
 
     // calculate the view matrix using our camera basis
     const view = mat4_look_at(this.pos, look_pos, worldup);
-
-    this.q++;
-    if (this.q % 100 == 0) {
-      console.log("pos");
-      console.log(this.pos);
-    }
 
     // compute final matrix
     return mat4_mul(projection, view);
