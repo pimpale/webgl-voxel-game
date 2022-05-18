@@ -1,6 +1,7 @@
 import { makeNoise3D } from 'open-simplex-noise';
-import {Vertex} from './game';
+import { Vertex } from './game';
 import { vec2, vec3 } from './utils';
+import * as Block from './block';
 
 const CHUNK_X_SIZE = 16;
 const CHUNK_Y_SIZE = 16;
@@ -96,14 +97,9 @@ function genChunkData(    //
   return blocks;
 }
 
-type BlockDef = {
-  transparent: boolean
-}
-
 function createMesh(
   blocks: Uint16Array,
   offset: vec3,
-  blockDefs: BlockDef[]
 ) {
   function index(x: number, y: number, z: number) {
     return x * CHUNK_Y_SIZE * CHUNK_Z_SIZE + y * CHUNK_Z_SIZE + z;
@@ -116,7 +112,7 @@ function createMesh(
       for (let z = 0; z < CHUNK_Z_SIZE; z++) {
         const bi = blocks[index(x, y, z)];
         // check that its not transparent
-        if (blockDefs[bi].transparent) {
+        if (Block.DEFS[bi].transparent) {
           continue;
         }
 
@@ -135,15 +131,13 @@ function createMesh(
         const v011: vec3 = [fx + 0, fy + 1, fz + 1];
         const v111: vec3 = [fx + 1, fy + 1, fz + 1];
 
-        const xoff = BLOCK_TILE_TEX_XSIZE;
-        const yoff = BLOCK_TILE_TEX_YSIZE;
-
-        // clang-format off
+        const xoff = Block.TILE_TEX_XSIZE;
+        const yoff = Block.TILE_TEX_YSIZE;
 
         // left face
-        if (x == 0 || blockDefs[blocks[index(x - 1, y, z)]].transparent) {
-          const bx = BLOCK_TILE_TEX_XSIZE * Block_LEFT;
-          const by = BLOCK_TILE_TEX_YSIZE * bi;
+        if (x == 0 || Block.DEFS[blocks[index(x - 1, y, z)]].transparent) {
+          const bx = Block.TILE_TEX_XSIZE * Block.LEFT;
+          const by = Block.TILE_TEX_YSIZE * bi;
           vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
@@ -152,9 +146,9 @@ function createMesh(
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
         }
         // right face
-        if (x == CHUNK_X_SIZE - 1 || blockDefs[blocks[index(x + 1, y, z)]].transparent) {
-          const bx = BLOCK_TILE_TEX_XSIZE * Block_RIGHT;
-          const by = BLOCK_TILE_TEX_YSIZE * bi;
+        if (x == CHUNK_X_SIZE - 1 || Block.DEFS[blocks[index(x + 1, y, z)]].transparent) {
+          const bx = Block.TILE_TEX_XSIZE * Block.RIGHT;
+          const by = Block.TILE_TEX_YSIZE * bi;
           vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
@@ -163,9 +157,9 @@ function createMesh(
           vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
         }
         // upper face
-        if (y == 0 || blockDefs[blocks[index(x, y - 1, z)]].transparent) {
-          const bx = BLOCK_TILE_TEX_XSIZE * Block_UP;
-          const by = BLOCK_TILE_TEX_YSIZE * bi;
+        if (y == 0 || Block.DEFS[blocks[index(x, y - 1, z)]].transparent) {
+          const bx = Block.TILE_TEX_XSIZE * Block.UP;
+          const by = Block.TILE_TEX_YSIZE * bi;
           vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
@@ -174,9 +168,9 @@ function createMesh(
           vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
         }
         // lower face
-        if (y == CHUNK_Y_SIZE - 1 || blockDefs[blocks[index(x, y + 1, z)]].transparent) {
-          const bx = BLOCK_TILE_TEX_XSIZE * Block_DOWN;
-          const by = BLOCK_TILE_TEX_YSIZE * bi;
+        if (y == CHUNK_Y_SIZE - 1 || Block.DEFS[blocks[index(x, y + 1, z)]].transparent) {
+          const bx = Block.TILE_TEX_XSIZE * Block.DOWN;
+          const by = Block.TILE_TEX_YSIZE * bi;
           vertexes.push({ position: v010, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
@@ -185,9 +179,9 @@ function createMesh(
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
         }
         // back face
-        if (z == 0 || blockDefs[blocks[index(x, y, z - 1)]].transparent) {
-          const bx = BLOCK_TILE_TEX_XSIZE * Block_BACK;
-          const by = BLOCK_TILE_TEX_YSIZE * bi;
+        if (z == 0 || Block.DEFS[blocks[index(x, y, z - 1)]].transparent) {
+          const bx = Block.TILE_TEX_XSIZE * Block.BACK;
+          const by = Block.TILE_TEX_YSIZE * bi;
           vertexes.push({ position: v000, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
@@ -196,9 +190,9 @@ function createMesh(
           vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
         }
         // front face
-        if (z == CHUNK_Z_SIZE - 1 || blockDefs[blocks[index(x, y, z + 1)]].transparent) {
-          const bx = BLOCK_TILE_TEX_XSIZE * Block_FRONT;
-          const by = BLOCK_TILE_TEX_YSIZE * bi;
+        if (z == CHUNK_Z_SIZE - 1 || Block.DEFS[blocks[index(x, y, z + 1)]].transparent) {
+          const bx = Block.TILE_TEX_XSIZE * Block.FRONT;
+          const by = Block.TILE_TEX_YSIZE * bi;
           vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v001, uv: [bx + 0.00, by + 0.00] });
@@ -206,7 +200,6 @@ function createMesh(
           vertexes.push({ position: v111, uv: [bx + xoff, by + yoff] });
           vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
         }
-        // clang-format on
       }
     }
   }
