@@ -57,6 +57,12 @@ class Camera {
     this.fast = false;
     this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
 
+    window.addEventListener("keypress", e => {
+        if(e.key === "f") {
+            this.fast = !this.fast;
+        }
+    })
+
     window.addEventListener("keydown", e => {
       switch (e.key) {
         case "w": {

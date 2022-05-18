@@ -1,6 +1,7 @@
 import { makeNoise4D } from 'open-simplex-noise';
 import { createShader, createProgram } from './webgl';
 import Camera from './camera';
+import World from './world';
 import {vec3, vec2, mat4_to_uniform} from './utils';
 
 export type Vertex = {
@@ -75,6 +76,7 @@ class Game {
 
   private canvas: HTMLCanvasElement;
   private camera: Camera;
+  private world: World;
 
   private gl: WebGL2RenderingContext;
 
@@ -105,60 +107,7 @@ class Game {
     const positionLoc = this.gl.getAttribLocation(program, 'a_position');
     const uvLoc = this.gl.getAttribLocation(program, 'a_uv');
 
-
-    const topcolor = convertColor(0x458588);
-    const bottomcolor = convertColor(0xdc3545);
-    const leftcolor = convertColor(0x98971a);
-    const rightcolor = convertColor(0xb16286);
-    const frontcolor = convertColor(0xd79921);
-    const backcolor = convertColor(0xEBDBB2);
-
-
-    // map different buffers
-    let filled = [
-      // top level
-      ...genPlane(3,3).flatMap((v, i) => [v[0], 0, v[1], ...topcolor]),
-      // bottomlevel
-      ...genPlane(3,3).flatMap((v, i) => [v[0], 1, v[1], ...bottomcolor]),
-      // left level
-      ...genPlane(3,3).flatMap((v, i) => [0, v[0], v[1], ...leftcolor]),
-      // right level
-      ...genPlane(3,3).flatMap((v, i) => [1, v[0], v[1], ...rightcolor]),
-      // front level
-      ...genPlane(3,3).flatMap((v, i) => [v[0], v[1], 0, ...frontcolor]),
-      // back level
-      ...genPlane(3,3).flatMap((v, i) => [v[0], v[1], 1, ...backcolor]),
-    ];
-
-
-    this.filledbuffer = this.gl.createBuffer()!;
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.filledbuffer);
-    this.gl.bufferData(
-      this.gl.ARRAY_BUFFER,
-      new Float32Array(filled),
-      this.gl.STATIC_DRAW
-    );
-
-    // setup our attributes to tell WebGL how to pull
-    // the data from the buffer above to the position attribute
-    this.gl.enableVertexAttribArray(positionLoc);
-    this.gl.vertexAttribPointer(
-      positionLoc,
-      3,              // size (num components)
-      this.gl.FLOAT,  // type of data in buffer
-      false,          // normalize
-      6 * 4,          // stride (0 = auto)
-      0,              // offset
-    );
-    this.gl.enableVertexAttribArray(uvLoc);
-    this.gl.vertexAttribPointer(
-      uvLoc,
-      3,              // size (num components)
-      this.gl.FLOAT,  // type of data in buffer
-      false,          // normalize
-      6 * 4,          // stride (0 = auto)
-      3 * 4,          // offset
-    );
+    this.world = new World(42, [0, 0, 0], this.gl, positionLoc, uvLoc);
 
     // retrieve uniforms
     this.mvpMatLoc= this.gl.getUniformLocation(program, "u_mvpMat")!;
@@ -181,6 +130,7 @@ class Game {
 
   animationLoop = () => {
     this.camera.update()
+    this.world.update()
 
     {
       // set uniform
@@ -188,8 +138,7 @@ class Game {
       this.gl.uniformMatrix4fv(this.mvpMatLoc, false, mat4_to_uniform(mvpMat));
 
       // draw triangles
-      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.filledbuffer);
-      this.gl.drawArrays(this.gl.TRIANGLES, 0, 3 * 3 * 6 * 6);
+      this.world.render();
     }
     this.requestID = window.requestAnimationFrame(this.animationLoop);
   }
