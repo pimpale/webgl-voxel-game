@@ -28,98 +28,30 @@ class Camera {
   // global camera position
   private pos: vec3;
   // pitch and yaw values in radians
-  private pitch: number;
-  private yaw: number;
+  private pitch: number = 0.0;
+  private yaw: number = RADIANS(-90.0);
   // the camera's basis
   private basis: CameraBasis;
 
   private canvas: HTMLCanvasElement;
 
-  private controlsEnabled: boolean;
-  private fast: boolean;
-  private keys: {
-    w: boolean,
-    a: boolean,
-    s: boolean,
-    d: boolean,
-    space: boolean,
-    shift: boolean,
-  };
+  private controlsEnabled: boolean = false;
+  private fast: boolean = false;
+  private keys: Set<string> = new Set();
 
   constructor(loc: vec3, canvas: HTMLCanvasElement) {
     this.pos = loc;
     this.canvas = canvas;
-    this.pitch = 0.0;
-    this.yaw = RADIANS(-90.0);
     this.basis = new CameraBasis(this.pitch, this.yaw);
 
-    this.controlsEnabled = false;
-    this.fast = false;
-    this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
-
     window.addEventListener("keypress", e => {
-        if(e.key === "f") {
-            this.fast = !this.fast;
-        }
+      if (e.key === "f") {
+        this.fast = !this.fast;
+      }
     })
 
-    window.addEventListener("keydown", e => {
-      switch (e.key) {
-        case "w": {
-          this.keys.w = true;
-          break;
-        }
-        case "a": {
-          this.keys.a = true;
-          break;
-        }
-        case "s": {
-          this.keys.s = true;
-          break;
-        }
-        case "d": {
-          this.keys.d = true;
-          break;
-        }
-        case " ": {
-          this.keys.space = true;
-          break;
-        }
-        case "Shift": {
-          this.keys.shift = true;
-          break;
-        }
-      }
-    });
-
-    window.addEventListener("keyup", e => {
-      switch (e.key) {
-        case "w": {
-          this.keys.w = false;
-          break;
-        }
-        case "a": {
-          this.keys.a = false;
-          break;
-        }
-        case "s": {
-          this.keys.s = false;
-          break;
-        }
-        case "d": {
-          this.keys.d = false;
-          break;
-        }
-        case " ": {
-          this.keys.space = false;
-          break;
-        }
-        case "Shift": {
-          this.keys.shift = false;
-          break;
-        }
-      }
-    });
+    window.addEventListener("keydown", e => this.keys.add(e.code));
+    window.addEventListener("keyup", e => this.keys.delete(e.code));
 
     // grab pointer lock on click
     this.canvas.addEventListener("click", e => {
@@ -161,22 +93,22 @@ class Camera {
     }
 
     const forwarddir = vec3_norm(vec3_cross(this.basis.right, worldup));
-    if (this.keys.w) {
+    if (this.keys.has('KeyW')) {
       this.pos = vec3_add(this.pos, vec3_scale(forwarddir, movscale));
     }
-    if (this.keys.s) {
+    if (this.keys.has('KeyS')) {
       this.pos = vec3_add(this.pos, vec3_scale(forwarddir, -movscale));
     }
-    if (this.keys.a) {
+    if (this.keys.has('KeyA')) {
       this.pos = vec3_add(this.pos, vec3_scale(this.basis.right, movscale));
     }
-    if (this.keys.d) {
+    if (this.keys.has('KeyD')) {
       this.pos = vec3_add(this.pos, vec3_scale(this.basis.right, -movscale));
     }
-    if (this.keys.shift) {
+    if (this.keys.has('ShiftLeft')) {
       this.pos = vec3_add(this.pos, vec3_scale(worldup, -movscale));
     }
-    if (this.keys.space) {
+    if (this.keys.has('Space')) {
       this.pos = vec3_add(this.pos, vec3_scale(worldup, movscale));
     }
   }
