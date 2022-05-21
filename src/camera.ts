@@ -1,6 +1,4 @@
 import { clamp, RADIANS, vec3_norm, vec3_cross, vec3_add, vec3_scale, vec3, mat4, mat4_perspective, mat4_mul, mat4_transpose, mat4_look_at, } from './utils';
-import { MatrixProd } from './utils';
-
 
 const worldup: vec3 = [0.0, 1.0, 0.0];
 
@@ -89,7 +87,7 @@ class Camera {
 
     let movscale = 0.02;
     if (this.fast) {
-      movscale *= 2;
+      movscale *= 5;
     }
 
     const forwarddir = vec3_norm(vec3_cross(this.basis.right, worldup));

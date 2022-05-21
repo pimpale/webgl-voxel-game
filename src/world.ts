@@ -6,9 +6,9 @@ import * as Block from './block';
 const MAX_CHUNKS_TO_GEN = 1;
 const MAX_CHUNKS_TO_MESH = 1;
 
-const CHUNK_X_SIZE = 8;
-const CHUNK_Y_SIZE = 8;
-const CHUNK_Z_SIZE = 8;
+const CHUNK_X_SIZE = 32;
+const CHUNK_Y_SIZE = 32;
+const CHUNK_Z_SIZE = 32;
 
 // how many chunks to render
 const RENDER_RADIUS_X = 2;

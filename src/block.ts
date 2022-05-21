@@ -7,19 +7,20 @@ export const FRONT = 4;
 export const BACK = 5;
 
 type BlockDef = {
-  transparent: true
-} | {
-  transparent: false
+  transparent: boolean
   name: string,
 }
 
 export const DEFS: BlockDef[] = [
-  // air
-  { transparent: true },
-  // grass
-  { transparent: false, name:"grass"},
-  // stone
-  { transparent: false, name:"stone"},
+  { transparent: true, name: "air" },
+  { transparent: false, name: "grass" },
+  { transparent: false, name: "soil" },
+  { transparent: false, name: "stone" },
+  { transparent: false, name: "wood" },
+  { transparent: false, name: "iron" },
+  { transparent: false, name: "iron ore" },
+  { transparent: false, name: "copper" },
+  { transparent: false, name: "copper ore" },
 ];
 
 // TODO: create a const here that a texture atlas using the defs
