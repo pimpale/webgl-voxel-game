@@ -127,3 +127,9 @@ export type vec2 = [x: number, y: number];
 export function clamp(v: number, min: number, max: number) {
   return Math.min(Math.max(v, min), max);
 }
+
+export function assert(cond: boolean, error: string) {
+  if (!cond) {
+    throw new Error(error)
+  }
+}

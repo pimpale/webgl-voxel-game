@@ -1,7 +1,7 @@
 import { makeNoise3D } from 'open-simplex-noise';
 import { Vertex } from './game';
 import { vec2, vec3, vec3_add, vec3_sub } from './utils';
-import * as Block from './block';
+import { BlockManager, Face} from './block';
 
 const MAX_CHUNKS_TO_GEN = 1;
 const MAX_CHUNKS_TO_MESH = 1;
@@ -16,10 +16,10 @@ const RENDER_RADIUS_Y = 2;
 const RENDER_RADIUS_Z = 2;
 
 type ChunkGraphics = {
-    vao: WebGLVertexArrayObject,
-    buffer: WebGLBuffer,
-    nVertexes: number
-  }
+  vao: WebGLVertexArrayObject,
+  buffer: WebGLBuffer,
+  nVertexes: number
+}
 
 type Chunk = {
   // array must be CHUNK_X_SIZE*CHUNK_Y_SIZE*CHUNK_Z_SIZE
@@ -46,11 +46,14 @@ class World {
   private ready: Set<string>;
 
   private gl: WebGL2RenderingContext;
+  private blockManager:BlockManager
+
   private glPositionLoc: number;
   private glUvLoc: number;
 
-  constructor(seed: number, loc: vec3, gl: WebGL2RenderingContext, positionLoc: number, uvLoc: number) {
+  constructor(seed: number, loc: vec3, gl: WebGL2RenderingContext, positionLoc: number, uvLoc: number, blockManager:BlockManager) {
     this.gl = gl;
+    this.blockManager = blockManager;
     this.glPositionLoc = positionLoc;
     this.glUvLoc = uvLoc;
     this.seed = seed;
@@ -125,7 +128,7 @@ class World {
   }
 
   makeChunkGraphics = (blocks: Uint16Array, offset: vec3) => {
-    const vertexes = createMesh(blocks, offset);
+    const vertexes = createMesh(blocks, offset, this.blockManager);
     const nVertexes = vertexes.length;
 
     const data = vertexes.flatMap(v => [...v.position, ...v.uv]);
@@ -169,9 +172,9 @@ class World {
     };
   }
 
-  deleteChunkGraphics = (graphics:ChunkGraphics) => {
-            this.gl.deleteBuffer(graphics.buffer);
-            this.gl.deleteVertexArray(graphics.vao);
+  deleteChunkGraphics = (graphics: ChunkGraphics) => {
+    this.gl.deleteBuffer(graphics.buffer);
+    this.gl.deleteVertexArray(graphics.vao);
   }
 
   update = () => {
@@ -200,10 +203,10 @@ class World {
         let chunk = this.chunk_map.get(coord);
         if (chunk !== undefined) {
           if (chunk.graphics !== undefined) {
-              this.deleteChunkGraphics(chunk.graphics);
+            this.deleteChunkGraphics(chunk.graphics);
           }
           const parsedCoord = JSON.parse(coord);
-          const offset:vec3 = [parsedCoord[0]*CHUNK_X_SIZE, parsedCoord[1]*CHUNK_Y_SIZE, parsedCoord[2]*CHUNK_Z_SIZE];
+          const offset: vec3 = [parsedCoord[0] * CHUNK_X_SIZE, parsedCoord[1] * CHUNK_Y_SIZE, parsedCoord[2] * CHUNK_Z_SIZE];
           chunk.graphics = this.makeChunkGraphics(chunk.blocks, offset);
           this.ready.add(coord);
           meshed_chunks++;
@@ -264,7 +267,7 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
 
 let q = 0;
 
-function createMesh(blocks: Uint16Array, offset: vec3) {
+function createMesh(blocks: Uint16Array, offset: vec3, bm:BlockManager) {
   function index(x: number, y: number, z: number) {
     return x * CHUNK_Y_SIZE * CHUNK_Z_SIZE + y * CHUNK_Z_SIZE + z;
   }
@@ -276,7 +279,7 @@ function createMesh(blocks: Uint16Array, offset: vec3) {
       for (let z = 0; z < CHUNK_Z_SIZE; z++) {
         const bi = blocks[index(x, y, z)];
         // check that its not transparent
-        if (Block.DEFS[bi].transparent) {
+        if (bm.defs[bi].transparent) {
           continue;
         }
 
@@ -295,13 +298,13 @@ function createMesh(blocks: Uint16Array, offset: vec3) {
         const v011: vec3 = [fx + 0, fy + 1, fz + 1];
         const v111: vec3 = [fx + 1, fy + 1, fz + 1];
 
-        const xoff = Block.TILE_TEX_XSIZE;
-        const yoff = Block.TILE_TEX_YSIZE;
+        const xoff = bm.tileTexXsize;
+        const yoff = bm.tileTexYsize;
 
         // left face
-        if (x === 0 || Block.DEFS[blocks[index(x - 1, y, z)]].transparent) {
-          const bx = Block.TILE_TEX_XSIZE * Block.LEFT;
-          const by = Block.TILE_TEX_YSIZE * bi;
+        if (x === 0 || bm.defs[blocks[index(x - 1, y, z)]].transparent) {
+          const bx = bm.tileTexXsize * Face.LEFT;
+          const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
@@ -310,9 +313,9 @@ function createMesh(blocks: Uint16Array, offset: vec3) {
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
         }
         // right face
-        if (x === CHUNK_X_SIZE - 1 || Block.DEFS[blocks[index(x + 1, y, z)]].transparent) {
-          const bx = Block.TILE_TEX_XSIZE * Block.RIGHT;
-          const by = Block.TILE_TEX_YSIZE * bi;
+        if (x === CHUNK_X_SIZE - 1 || bm.defs[blocks[index(x + 1, y, z)]].transparent) {
+          const bx = bm.tileTexXsize * Face.RIGHT;
+          const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
@@ -321,9 +324,9 @@ function createMesh(blocks: Uint16Array, offset: vec3) {
           vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
         }
         // upper face
-        if (y === 0 || Block.DEFS[blocks[index(x, y - 1, z)]].transparent) {
-          const bx = Block.TILE_TEX_XSIZE * Block.UP;
-          const by = Block.TILE_TEX_YSIZE * bi;
+        if (y === 0 || bm.defs[blocks[index(x, y - 1, z)]].transparent) {
+          const bx = bm.tileTexXsize * Face.UP;
+          const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
@@ -332,9 +335,9 @@ function createMesh(blocks: Uint16Array, offset: vec3) {
           vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
         }
         // lower face
-        if (y === CHUNK_Y_SIZE - 1 || Block.DEFS[blocks[index(x, y + 1, z)]].transparent) {
-          const bx = Block.TILE_TEX_XSIZE * Block.DOWN;
-          const by = Block.TILE_TEX_YSIZE * bi;
+        if (y === CHUNK_Y_SIZE - 1 || bm.defs[blocks[index(x, y + 1, z)]].transparent) {
+          const bx = bm.tileTexXsize * Face.DOWN;
+          const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v010, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
@@ -343,9 +346,9 @@ function createMesh(blocks: Uint16Array, offset: vec3) {
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
         }
         // back face
-        if (z === 0 || Block.DEFS[blocks[index(x, y, z - 1)]].transparent) {
-          const bx = Block.TILE_TEX_XSIZE * Block.BACK;
-          const by = Block.TILE_TEX_YSIZE * bi;
+        if (z === 0 || bm.defs[blocks[index(x, y, z - 1)]].transparent) {
+          const bx = bm.tileTexXsize * Face.BACK;
+          const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v000, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
@@ -354,9 +357,9 @@ function createMesh(blocks: Uint16Array, offset: vec3) {
           vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
         }
         // front face
-        if (z === CHUNK_Z_SIZE - 1 || Block.DEFS[blocks[index(x, y, z + 1)]].transparent) {
-          const bx = Block.TILE_TEX_XSIZE * Block.FRONT;
-          const by = Block.TILE_TEX_YSIZE * bi;
+        if (z === CHUNK_Z_SIZE - 1 || bm.defs[blocks[index(x, y, z + 1)]].transparent) {
+          const bx = bm.tileTexXsize * Face.FRONT;
+          const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v001, uv: [bx + 0.00, by + 0.00] });

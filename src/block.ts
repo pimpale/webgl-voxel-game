@@ -1,34 +1,93 @@
+import { assert } from './utils';
 // this file contains block definitions
-export const LEFT = 0;
-export const RIGHT = 1;
-export const UP = 2;
-export const DOWN = 3;
-export const FRONT = 4;
-export const BACK = 5;
-
-type BlockDef = {
-  transparent: boolean
-  name: string,
+export enum Face {
+  LEFT = 0,
+  RIGHT = 1,
+  UP = 2,
+  DOWN = 3,
+  FRONT = 4,
+  BACK = 5,
 }
 
-export const DEFS: BlockDef[] = [
-  { transparent: true, name: "air" },
-  { transparent: false, name: "grass" },
-  { transparent: false, name: "soil" },
-  { transparent: false, name: "stone" },
-  { transparent: false, name: "wood" },
-  { transparent: false, name: "iron" },
-  { transparent: false, name: "iron ore" },
-  { transparent: false, name: "copper" },
-  { transparent: false, name: "copper ore" },
-];
+export type BlockDef =
+  { name: string } &
+  (
+    {
+      transparent: true
+    } |
+    {
+      transparent: false,
+      textures: [
+        left: HTMLImageElement,
+        right: HTMLImageElement,
+        up: HTMLImageElement,
+        down: HTMLImageElement,
+        front: HTMLImageElement,
+        back: HTMLImageElement
+      ]
+    }
+  )
 
 // TODO: create a const here that a texture atlas using the defs
 // Each row represents a block. The first row will be ignored, since air is transparent
 // The second row should be grass, and the third row should be stone.
 // Each row of the texture atlas should have 6 images, making it 16*6 pixels wide
 
-// The reason its 1/6 is that there are 6 faces on a cube.
-// The texture map tile takes up 1/6
-export const TILE_TEX_XSIZE = 1 / 6;
-export const TILE_TEX_YSIZE = 1 / DEFS.length;
+
+export class BlockManager {
+
+  // The reason its 1/6 is that there are 6 faces on a cube.
+  // The texture map tile takes up 1/6
+  readonly tileTexXsize: number;
+  readonly tileTexYsize: number;
+  readonly defs: BlockDef[];
+  readonly tileSize: number;
+
+  constructor(tileSize:number, defs: BlockDef[]) {
+    this.tileSize = tileSize;
+    this.defs = defs;
+    this.tileTexXsize = 1 / 6;
+    this.tileTexYsize = 1 / defs.length;
+
+    // validate tiles
+    for (let block_index = 0; block_index < this.defs.length; block_index++) {
+      const block = this.defs[block_index];
+      if (block.transparent) {
+        continue;
+      }
+      for (let face_index = 0; face_index < block.textures.length; face_index++) {
+        const img = block.textures[face_index];
+        assert(img.height === tileSize, `block #{block_index} face #{face_index} height != {tileSize}`);
+        assert(img.width === tileSize, `block #{block_index} face #{face_index} width != {tileSize}`);
+      }
+    }
+
+  }
+
+  buildTextureAtlas = (gl: WebGL2RenderingContext) => {
+    let tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    for (let block_index = 0; block_index < this.defs.length; block_index++) {
+      const block = this.defs[block_index];
+      // do nothing if transparent block
+      if (block.transparent) {
+        continue;
+      }
+      // write each face
+      for (let face_index = 0; face_index < block.textures.length; face_index++) {
+        gl.texSubImage2D(
+          gl.TEXTURE_2D, // texture kind
+          0, // write at 0 level
+          face_index * this.tileSize, // x offset
+          block_index * this.tileSize, // y offset
+          this.tileSize, // width
+          this.tileSize, // height
+          gl.RGBA, // format
+          gl.UNSIGNED_BYTE, // type
+          block.textures[face_index]
+        );
+      }
+    }
+    return tex;
+  }
+}

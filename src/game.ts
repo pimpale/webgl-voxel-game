@@ -2,7 +2,8 @@ import { makeNoise4D } from 'open-simplex-noise';
 import { createShader, createProgram } from './webgl';
 import Camera from './camera';
 import World from './world';
-import {vec3, vec2, mat4_to_uniform} from './utils';
+import { vec3, vec2, mat4_to_uniform } from './utils';
+import { BlockManager } from './block';
 
 export type Vertex = {
   position: vec3,
@@ -27,6 +28,14 @@ void main() {
 
 const fs = `#version 300 es
 precision highp float;
+precision highp sampler2D;
+
+// the texture atlas for the blocks
+uniform sampler2D u_textureAtlas;
+// the normal atlas for the blocks
+uniform sampler2D u_normalAtlas;
+
+// texCoord
 in vec2 v_uv;
 
 out vec4 v_outColor;
@@ -46,10 +55,10 @@ function genPlane(xseg: number, yseg: number): vec2[] {
 
   for (let xi = 0; xi < xseg; xi++) {
     const x = xi / xseg;
-    const nx = (xi+1) / xseg;
+    const nx = (xi + 1) / xseg;
     for (let yi = 0; yi < yseg; yi++) {
       const y = yi / yseg;
-      const ny = (yi+1) / yseg;
+      const ny = (yi + 1) / yseg;
 
       // add two triangles
 
@@ -82,22 +91,34 @@ class Game {
   private camera: Camera;
   private world: World;
 
+  private blockManager: BlockManager;
+
   private gl: WebGL2RenderingContext;
 
+  private textureAtlas: WebGLTexture;
+  private normalAtlas: WebGLTexture;
+
   private mvpMatLoc: WebGLUniformLocation;
+  private textureAtlasLoc: WebGLUniformLocation;
+  private normalAtlasLoc: WebGLUniformLocation;
 
   private filledbuffer!: WebGLBuffer;
 
-  private requestID?:number;
+  private requestID?: number;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, blockManager: BlockManager) {
     this.canvas = canvas;
+    this.blockManager = blockManager;
 
-    this.camera = new Camera([0,0,0], this.canvas);
-
+    this.camera = new Camera([0, 0, 0], this.canvas);
 
     this.gl = canvas.getContext('webgl2')!
     this.gl.enable(this.gl.DEPTH_TEST);
+
+    // create texture atlases
+    this.textureAtlas = this.blockManager.buildTextureAtlas(this.gl);
+    // TODO! (use normal atlas, not yet defined)
+    this.normalAtlas = this.blockManager.buildTextureAtlas(this.gl);
 
     const program = createProgram(
       this.gl,
@@ -111,12 +132,22 @@ class Game {
     const positionLoc = this.gl.getAttribLocation(program, 'a_position');
     const uvLoc = this.gl.getAttribLocation(program, 'a_uv');
 
-    this.world = new World(42, [0, 0, 0], this.gl, positionLoc, uvLoc);
+    this.world = new World(42, [0, 0, 0], this.gl, positionLoc, uvLoc, blockManager);
 
     // retrieve uniforms
-    this.mvpMatLoc= this.gl.getUniformLocation(program, "u_mvpMat")!;
+    this.mvpMatLoc = this.gl.getUniformLocation(program, "u_mvpMat")!;
+    this.textureAtlasLoc = this.gl.getUniformLocation(program, "u_textureAtlas")!;
+    this.normalAtlasLoc = this.gl.getUniformLocation(program, "u_normalAtlas")!;
+
+    // Tell the shader to get the textureAtlas texture from texture unit 0
+    this.gl.uniform1i(this.textureAtlasLoc, 0);
+
+
+    // Tell the shader to get the normalAtlas texture from texture unit 1
+    this.gl.uniform1i(this.normalAtlasLoc, 1);
 
     this.gl.useProgram(program);
+
 
     // resize canvas on window
     this.resizeCanvas();
@@ -124,9 +155,9 @@ class Game {
   }
 
   resizeCanvas = () => {
-      this.canvas.width = window.innerWidth;
-      this.canvas.height = window.innerHeight;
-      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+    this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
   }
 
   displayHelp = () => this.animationLoop();
