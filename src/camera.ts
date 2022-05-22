@@ -125,6 +125,8 @@ class Camera {
     // compute final matrix
     return mat4_mul(projection, view);
   }
+
+  getLoc = () => [this.pos[0], this.pos[1], this.pos[2]] as vec3
 }
 
 export default Camera

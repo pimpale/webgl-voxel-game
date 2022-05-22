@@ -51,18 +51,20 @@ class World {
   private glPositionLoc: number;
   private glUvLoc: number;
 
-  constructor(seed: number, loc: vec3, gl: WebGL2RenderingContext, positionLoc: number, uvLoc: number, blockManager: BlockManager) {
+  getWorldChunkLoc = (cameraLoc:vec3) => [
+      Math.floor(cameraLoc[0] / CHUNK_X_SIZE),
+      Math.floor(cameraLoc[1] / CHUNK_Y_SIZE),
+      Math.floor(cameraLoc[2] / CHUNK_Z_SIZE),
+    ] as vec3;
+
+  constructor(seed: number, cameraLoc: vec3, gl: WebGL2RenderingContext, positionLoc: number, uvLoc: number, blockManager: BlockManager) {
     this.gl = gl;
     this.blockManager = blockManager;
     this.glPositionLoc = positionLoc;
     this.glUvLoc = uvLoc;
     this.seed = seed;
     this.noiseFn = makeNoise3D(seed);
-    this.worldChunkCenterLoc = [
-      Math.floor(loc[0] / CHUNK_X_SIZE),
-      Math.floor(loc[1] / CHUNK_Y_SIZE),
-      Math.floor(loc[2] / CHUNK_Z_SIZE),
-    ];
+    this.worldChunkCenterLoc = this.getWorldChunkLoc(cameraLoc);
     this.chunk_map = new Map();
 
     this.togenerate = new Set();
@@ -177,7 +179,7 @@ class World {
     this.gl.deleteVertexArray(graphics.vao);
   }
 
-  update = () => {
+  update = (cameraLoc:vec3) => {
 
     // TODO: every frame, check if the camera's chunk location is equal to our chunk location
     // if not so, run updateCameraLoc
@@ -212,6 +214,16 @@ class World {
           meshed_chunks++;
         }
       }
+    }
+
+    const cameraChunkLoc = this.getWorldChunkLoc(cameraLoc);
+    if(
+        cameraChunkLoc[0] !== this.worldChunkCenterLoc[0] ||
+        cameraChunkLoc[1] !== this.worldChunkCenterLoc[1] ||
+        cameraChunkLoc[2] !== this.worldChunkCenterLoc[2]
+    ) {
+        this.worldChunkCenterLoc = cameraChunkLoc;
+        this.updateCameraLoc();
     }
   }
 

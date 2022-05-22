@@ -169,8 +169,8 @@ class Game {
 
 
   animationLoop = () => {
-    this.camera.update()
-    this.world.update()
+    this.camera.update();
+    this.world.update(this.camera.getLoc());
 
     {
       // set uniform
