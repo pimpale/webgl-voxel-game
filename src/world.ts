@@ -1,6 +1,6 @@
 import { makeNoise3D } from 'open-simplex-noise';
 import { Vertex } from './game';
-import { vec2, vec3, vec3_add, vec3_sub } from './utils';
+import { vec2, vec3, vec3_add, vec3_sub, vec3_dot, assert } from './utils';
 import { BlockManager, Face } from './block';
 
 const MAX_CHUNKS_TO_GEN = 1;
@@ -51,11 +51,11 @@ class World {
   private glPositionLoc: number;
   private glUvLoc: number;
 
-  getWorldChunkLoc = (cameraLoc:vec3) => [
-      Math.floor(cameraLoc[0] / CHUNK_X_SIZE),
-      Math.floor(cameraLoc[1] / CHUNK_Y_SIZE),
-      Math.floor(cameraLoc[2] / CHUNK_Z_SIZE),
-    ] as vec3;
+  getWorldChunkLoc = (cameraLoc: vec3) => [
+    Math.floor(cameraLoc[0] / CHUNK_X_SIZE),
+    Math.floor(cameraLoc[1] / CHUNK_Y_SIZE),
+    Math.floor(cameraLoc[2] / CHUNK_Z_SIZE),
+  ] as vec3;
 
   constructor(seed: number, cameraLoc: vec3, gl: WebGL2RenderingContext, positionLoc: number, uvLoc: number, blockManager: BlockManager) {
     this.gl = gl;
@@ -179,7 +179,7 @@ class World {
     this.gl.deleteVertexArray(graphics.vao);
   }
 
-  update = (cameraLoc:vec3) => {
+  update = (cameraLoc: vec3) => {
 
     // TODO: every frame, check if the camera's chunk location is equal to our chunk location
     // if not so, run updateCameraLoc
@@ -217,13 +217,13 @@ class World {
     }
 
     const cameraChunkLoc = this.getWorldChunkLoc(cameraLoc);
-    if(
-        cameraChunkLoc[0] !== this.worldChunkCenterLoc[0] ||
-        cameraChunkLoc[1] !== this.worldChunkCenterLoc[1] ||
-        cameraChunkLoc[2] !== this.worldChunkCenterLoc[2]
+    if (
+      cameraChunkLoc[0] !== this.worldChunkCenterLoc[0] ||
+      cameraChunkLoc[1] !== this.worldChunkCenterLoc[1] ||
+      cameraChunkLoc[2] !== this.worldChunkCenterLoc[2]
     ) {
-        this.worldChunkCenterLoc = cameraChunkLoc;
-        this.updateCameraLoc();
+      this.worldChunkCenterLoc = cameraChunkLoc;
+      this.updateCameraLoc();
     }
   }
 
@@ -236,11 +236,147 @@ class World {
       }
     }
   }
+
+  getBlock = (coords: vec3) => {
+    const chunk = this.chunk_map.get(JSON.stringify(this.getWorldChunkLoc(coords)));
+    if (chunk) {
+      return chunk.blocks[chunkDataIndex(
+        coords[0] % CHUNK_X_SIZE,
+        coords[1] % CHUNK_Y_SIZE,
+        coords[2] % CHUNK_Z_SIZE,
+      )];
+    } else {
+      return null;
+    }
+  }
+
+  intbound = (s: number, ds: number) => {
+    // Some kind of edge case, see:
+    // http://gamedev.stackexchange.com/questions/47362/cast-ray-to-select-block-in-voxel-game#comment160436_49423
+    const sIsInteger = Math.round(s) == s;
+    if (ds < 0 && sIsInteger)
+      return 0;
+
+    let ceils: number;
+    if (s == 0.0) {
+      ceils = 1.0;
+    } else {
+      ceils = Math.ceil(s);
+    }
+
+    return (ds > 0 ? ceils - s : s - Math.floor(s)) / Math.abs(ds);
+  }
+
+  castRay = (origin: vec3, direction: vec3, max_dist: number) => {
+    // From "A Fast Voxel Traversal Algorithm for Ray Tracing"
+    // by John Amanatides and Andrew Woo, 1987
+    // <http://www.cse.yorku.ca/~amana/research/grid.pdf>
+    // <http://citeseer.ist.psu.edu/viewdoc/summary?doi=10.1.1.42.3443>
+    // Extensions to the described algorithm:
+    //   • Imposed a distance limit.
+    //   • The face passed through to reach the current cube is provided to
+    //     the callback.
+
+    // The foundation of this algorithm is a parameterized representation of
+    // the provided ray,
+    //                    origin + t * direction,
+    // except that t is not actually stored; rather, at any given point in the
+    // traversal, we keep track of the *greater* t values which we would have
+    // if we took a step sufficient to cross a cube boundary along that axis
+    // (i.e. change the integer part of the coordinate) in the variables
+    // tMaxX, tMaxY, and tMaxZ.
+
+    // Cube containing origin point.
+    let x = Math.floor(origin[0]);
+    let y = Math.floor(origin[1]);
+    let z = Math.floor(origin[2]);
+    // Break out direction vector.
+    const [dx, dy, dz] = direction;
+    // Direction to increment x,y,z when stepping.
+    const stepX = Math.sign(dx);
+    const stepY = Math.sign(dy);
+    const stepZ = Math.sign(dz);
+    // See description above. The initial values depend on the fractional
+    // part of the origin.
+    let tMaxX = this.intbound(origin[0], dx);
+    let tMaxY = this.intbound(origin[1], dy);
+    let tMaxZ = this.intbound(origin[2], dz);
+    // The change in t when taking a step (always positive).
+    const tDeltaX = stepX / dx;
+    const tDeltaY = stepY / dy;
+    const tDeltaZ = stepZ / dz;
+
+    // Avoids an infinite loop.
+    // reject if the direction is zero
+    assert(vec3_dot(direction, direction) === 0, "direction vector is 0");
+
+    // Rescale from units of 1 cube-edge to units of 'direction' so we can
+    // compare with 't'.
+    const radius = max_dist / Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    let face = Face.UP;
+
+    while (true) {
+      // get block here
+      const block = this.getBlock([x, y, z]);
+      if (block === null) {
+        break;
+      }
+
+      if (!this.blockManager.defs[block].transparent) {
+        return {
+          coords: [x, y, z] as vec3,
+          face
+        };
+      }
+
+      // tMaxX stores the t-value at which we cross a cube boundary along the
+      // X axis, and similarly for Y and Z. Therefore, choosing the least tMax
+      // chooses the closest cube boundary. Only the first case of the four
+      // has been commented in detail.
+      if (tMaxX < tMaxY) {
+        if (tMaxX < tMaxZ) {
+          if (tMaxX > radius)
+            break;
+          // Update which cube we are now in.
+          x += stepX;
+          // Adjust tMaxX to the next X-oriented boundary crossing.
+          tMaxX += tDeltaX;
+          // Record the normal vector of the cube face we entered.
+          face = stepX == 1 ? Face.LEFT : Face.RIGHT;
+        } else {
+          if (tMaxZ > radius)
+            break;
+          z += stepZ;
+          tMaxZ += tDeltaZ;
+          face = stepZ == 1 ? Face.BACK : Face.FRONT;
+        }
+      } else {
+        if (tMaxY < tMaxZ) {
+          if (tMaxY > radius)
+            break;
+          y += stepY;
+          tMaxY += tDeltaY;
+          face = stepY == 1 ? Face.UP : Face.DOWN;
+        } else {
+          // Identical to the second case, repeated for simplicity in
+          // the conditionals.
+          if (tMaxZ > radius)
+            break;
+          z += stepZ;
+          tMaxZ += tDeltaZ;
+          face = stepZ == 1 ? Face.BACK : Face.FRONT;
+        }
+      }
+    }
+
+    return null;
+  }
 }
 
 // get chunk data index
 function chunkDataIndex(x: number, y: number, z: number) {
-  return x * CHUNK_Y_SIZE * CHUNK_Z_SIZE + y * CHUNK_Z_SIZE + z;
+  return Math.floor(x) * CHUNK_Y_SIZE * CHUNK_Z_SIZE + Math.floor(y) * CHUNK_Z_SIZE + Math.floor(z);
 }
 
 
