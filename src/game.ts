@@ -41,11 +41,9 @@ in vec2 v_uv;
 out vec4 v_outColor;
 
 void main() {
+  vec3 color = texture(u_textureAtlas, v_uv).rgb;
 
-  // TODO: start using textures instead of directly using the uv coordinates
-  // Also, use the uv coordinates to index into the texture
-
-  v_outColor = vec4(v_uv, 0.0, 1.0);
+  v_outColor = vec4(color, 1.0);
 }
 `;
 
@@ -115,10 +113,7 @@ class Game {
     this.gl = canvas.getContext('webgl2')!
     this.gl.enable(this.gl.DEPTH_TEST);
 
-    // create texture atlases
-    this.textureAtlas = this.blockManager.buildTextureAtlas(this.gl);
-    // TODO! (use normal atlas, not yet defined)
-    this.normalAtlas = this.blockManager.buildTextureAtlas(this.gl);
+
 
     const program = createProgram(
       this.gl,
@@ -127,6 +122,9 @@ class Game {
         createShader(this.gl, this.gl.FRAGMENT_SHADER, fs),
       ]
     )!;
+
+    // set this program as current
+    this.gl.useProgram(program);
 
     // get attribute locations
     const positionLoc = this.gl.getAttribLocation(program, 'a_position');
@@ -139,14 +137,21 @@ class Game {
     this.textureAtlasLoc = this.gl.getUniformLocation(program, "u_textureAtlas")!;
     this.normalAtlasLoc = this.gl.getUniformLocation(program, "u_normalAtlas")!;
 
+    // set texture 0 as current
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    // create texture atlas at texture 0
+    this.textureAtlas = this.blockManager.buildTextureAtlas(this.gl);
     // Tell the shader to get the textureAtlas texture from texture unit 0
     this.gl.uniform1i(this.textureAtlasLoc, 0);
 
 
+    // set texture 1 as current
+    this.gl.activeTexture(this.gl.TEXTURE1);
+    // TODO! (use normal atlas, not yet defined)
+    this.normalAtlas = this.blockManager.buildTextureAtlas(this.gl);
     // Tell the shader to get the normalAtlas texture from texture unit 1
     this.gl.uniform1i(this.normalAtlasLoc, 1);
 
-    this.gl.useProgram(program);
 
 
     // resize canvas on window

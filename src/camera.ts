@@ -1,6 +1,6 @@
 import { clamp, RADIANS, vec3_norm, vec3_cross, vec3_add, vec3_scale, vec3, mat4, mat4_perspective, mat4_mul, mat4_transpose, mat4_look_at, } from './utils';
 
-const worldup: vec3 = [0.0, 1.0, 0.0];
+const worldup: vec3 = [0.0, -1.0, 0.0];
 
 export class CameraBasis {
   readonly front: vec3;
@@ -69,8 +69,8 @@ class Camera {
 
       const rotscale = 0.001;
 
-      this.yaw += e.movementX * rotscale;
-      this.pitch += e.movementY * rotscale;
+      this.yaw -= e.movementX * rotscale;
+      this.pitch -= e.movementY * rotscale;
 
       // clamp camera->pitch between +/-89 degrees
       this.pitch = clamp(this.pitch, RADIANS(-89.9), RADIANS(89.9));

@@ -43,7 +43,7 @@ export class BlockManager {
   readonly defs: BlockDef[];
   readonly tileSize: number;
 
-  constructor(tileSize:number, defs: BlockDef[]) {
+  constructor(tileSize: number, defs: BlockDef[]) {
     this.tileSize = tileSize;
     this.defs = defs;
     this.tileTexXsize = 1 / 6;
@@ -67,6 +67,32 @@ export class BlockManager {
   buildTextureAtlas = (gl: WebGL2RenderingContext) => {
     let tex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); // see https://webglfundamentals.org/webgl/lessons/webgl-data-textures.html
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+
+    // atlas must be big enough to store all the images
+    const atlasXsize = this.tileSize*6;
+    const atlasYsize = this.tileSize*this.defs.length;
+
+    // initialize image by loading with black for now
+    const data = new Uint8Array(atlasXsize*atlasYsize*4);
+
+    // (required to initialize before doing texSubImage2D)
+    gl.texImage2D(
+      gl.TEXTURE_2D, // texture kind
+      0, // write at 0 level
+      gl.RGBA, // internalformat
+      atlasXsize, // width
+      atlasYsize, // height
+      0, // border
+      gl.RGBA, // format
+      gl.UNSIGNED_BYTE, // type
+      data, // pixels
+    );
+
+
     for (let block_index = 0; block_index < this.defs.length; block_index++) {
       const block = this.defs[block_index];
       // do nothing if transparent block
@@ -88,6 +114,9 @@ export class BlockManager {
         );
       }
     }
+
+    gl.generateMipmap(gl.TEXTURE_2D);
+
     return tex;
   }
 }
