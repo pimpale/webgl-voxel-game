@@ -1,4 +1,4 @@
-import { assert } from './utils';
+import { assert, vec3 } from './utils';
 // this file contains block definitions
 export enum Face {
   LEFT = 0,
@@ -9,14 +9,44 @@ export enum Face {
   BACK = 5,
 }
 
+export function getNormal(face:Face):vec3 {
+  switch(face) {
+      case Face.LEFT: {
+          return [-0, 0, 0]
+      }
+      case Face.RIGHT:{
+          return [0, 1, 0]
+      }
+      case Face.UP:{
+          return [0, 1, 0]
+      }
+      case Face.DOWN:{
+          break;
+      }
+      case Face.FRONT:{
+          break;
+      }
+      case Face.BACK:{
+          break;
+      }
+  }
+}
+
+export enum Kind {
+    Air,
+    Solid,
+    Light,
+    Transparent
+}
+
 export type BlockDef =
   { name: string } &
   (
     {
-      transparent: true
+      kind: Kind.Air
     } |
     {
-      transparent: false,
+      kind: Kind.Solid | Kind.Light | Kind.Transparent,
       textures: [
         left: HTMLImageElement,
         right: HTMLImageElement,

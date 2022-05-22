@@ -170,7 +170,7 @@ class Game {
 
   animationLoop = () => {
     this.camera.update();
-    this.world.update(this.camera.getLoc());
+    this.world.update(this.camera.getLoc(), this.camera.getFront());
 
     {
       // set uniform

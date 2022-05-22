@@ -1,7 +1,7 @@
 import { makeNoise3D } from 'open-simplex-noise';
 import { Vertex } from './game';
 import { vec2, vec3, vec3_add, vec3_sub, vec3_dot, assert } from './utils';
-import { BlockManager, Face } from './block';
+import { BlockDef, BlockManager, Face, Kind } from './block';
 
 const MAX_CHUNKS_TO_GEN = 1;
 const MAX_CHUNKS_TO_MESH = 1;
@@ -16,9 +16,14 @@ const RENDER_RADIUS_Y = 2;
 const RENDER_RADIUS_Z = 2;
 
 type ChunkGraphics = {
-  vao: WebGLVertexArrayObject,
-  buffer: WebGLBuffer,
-  nVertexes: number
+  // will be drawn when calculating shadowmap
+  solidVao: WebGLVertexArrayObject,
+  solidBuffer: WebGLBuffer,
+  solidVertexCount: number,
+  // will not be drawn when calculating shadowmap
+  transparentVao: WebGLVertexArrayObject,
+  transparentBuffer: WebGLBuffer,
+  transparentVertexCount: number
 }
 
 type Chunk = {
@@ -27,6 +32,29 @@ type Chunk = {
   graphics?: ChunkGraphics
 }
 
+
+// these are used to render the shadow map
+const shadowmap_vs = `#version 300 es
+precision highp float;
+layout(location=0) in vec3 a_position;
+
+// premultiplied mvp matrix
+uniform mat4 u_mvpMat;
+
+void main() {
+   gl_Position = u_mvpMat * vec4(a_position, 1.0);
+}
+`;
+
+const shadowmap_fs = `#version 300 es
+out vec4 v_outColor;
+void main() {
+  v_outColor = vec4(0.0, 0.0, 0.0, 1.0);
+}
+`;
+
+
+
 class World {
 
   private worldChunkCenterLoc: vec3;
@@ -34,6 +62,15 @@ class World {
   // noise function
   private readonly seed: number;
   private readonly noiseFn: (x: number, y: number, z: number) => number;
+
+  // highlight
+  private highlighted: boolean;
+  private highlightVao: WebGLVertexArrayObject;
+  private highlightBuffer: WebGLBuffer;
+  private highlightVertexes: number;
+
+  // list of active lights
+  private lights: Light[];
 
   // hashmap storing chunks
   private chunk_map: Map<string, Chunk>;
@@ -66,10 +103,47 @@ class World {
     this.noiseFn = makeNoise3D(seed);
     this.worldChunkCenterLoc = this.getWorldChunkLoc(cameraLoc);
     this.chunk_map = new Map();
+    this.lights = [];
 
     this.togenerate = new Set();
     this.tomesh = new Set();
     this.ready = new Set();
+
+    // initialize highlight
+    {
+      this.highlighted = false;
+      this.highlightVertexes = 0;
+      this.highlightVao = this.gl.createVertexArray()!;
+      this.gl.bindVertexArray(this.highlightVao);
+
+      this.highlightBuffer = this.gl.createBuffer()!;
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.highlightBuffer);
+      // setup our attributes to tell WebGL how to pull
+      // the data from the buffer above to the position attribute
+      this.gl.enableVertexAttribArray(this.glPositionLoc);
+      this.gl.vertexAttribPointer(
+        this.glPositionLoc,
+        3,              // size (num components)
+        this.gl.FLOAT,  // type of data in buffer
+        false,          // normalize
+        5 * 4,          // stride (0 = auto)
+        0 * 4,          // offset
+      );
+      this.gl.enableVertexAttribArray(this.glUvLoc);
+      this.gl.vertexAttribPointer(
+        this.glUvLoc,
+        2,              // size (num components)
+        this.gl.FLOAT,  // type of data in buffer
+        false,          // normalize
+        5 * 4,          // stride (0 = auto)
+        3 * 4,          // offset
+      );
+    }
+
+
+
+
+
 
     this.updateCameraLoc();
   }
@@ -82,7 +156,7 @@ class World {
   }
 
   // if the camera new chunk coords misalign with our current chunk coords then
-  updateCameraLoc = () => {
+  private updateCameraLoc = () => {
     // if any togenerate chunks now shouldn't be generated, remove them
     for (const coord of this.togenerate) {
       if (!this.shouldBeLoaded(JSON.parse(coord))) {
@@ -129,7 +203,7 @@ class World {
     }
   }
 
-  makeChunkGraphics = (blocks: Uint16Array, offset: vec3) => {
+  private makeChunkGraphics = (blocks: Uint16Array, offset: vec3) => {
     const vertexes = createMesh(blocks, offset, this.blockManager);
     const nVertexes = vertexes.length;
 
@@ -179,10 +253,23 @@ class World {
     this.gl.deleteVertexArray(graphics.vao);
   }
 
-  update = (cameraLoc: vec3) => {
+  update = (cameraLoc: vec3, cameraDir: vec3) => {
+    const ray = this.castRay(cameraLoc, cameraDir, 100);
 
-    // TODO: every frame, check if the camera's chunk location is equal to our chunk location
-    // if not so, run updateCameraLoc
+    if (ray) {
+      this.highlighted = true;
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.highlightBuffer);
+      const vertexes = createMeshHighlight(ray.coords, ray.face, this.blockManager);
+      this.highlightVertexes = vertexes.length;
+      const vertexData = vertexes.flatMap(v => [...v.position, ...v.uv]);
+      this.gl.bufferData(
+        this.gl.ARRAY_BUFFER,
+        new Float32Array(vertexData),
+        this.gl.DYNAMIC_DRAW
+      );
+    } else {
+      this.highlighted = false;
+    }
 
     // generate at most MAX_CHUNKS_TO_GEN chunks
     let genned_chunks = 0;
@@ -235,22 +322,34 @@ class World {
         this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.nVertexes);
       }
     }
+    if (this.highlighted) {
+      this.gl.bindVertexArray(this.highlightVao);
+      this.gl.drawArrays(this.gl.TRIANGLES, 0, this.highlightVertexes);
+    }
   }
 
   getBlock = (coords: vec3) => {
+    const mod = (n: number, d: number) => {
+      const ret = n % d;
+      if (ret < 0) {
+        return ret + d;
+      } else {
+        return ret;
+      }
+    }
     const chunk = this.chunk_map.get(JSON.stringify(this.getWorldChunkLoc(coords)));
     if (chunk) {
       return chunk.blocks[chunkDataIndex(
-        coords[0] % CHUNK_X_SIZE,
-        coords[1] % CHUNK_Y_SIZE,
-        coords[2] % CHUNK_Z_SIZE,
+        mod(coords[0], CHUNK_X_SIZE),
+        mod(coords[1], CHUNK_Y_SIZE),
+        mod(coords[2], CHUNK_Z_SIZE),
       )];
     } else {
       return null;
     }
   }
 
-  intbound = (s: number, ds: number) => {
+  private intbound = (s: number, ds: number) => {
     // Some kind of edge case, see:
     // http://gamedev.stackexchange.com/questions/47362/cast-ray-to-select-block-in-voxel-game#comment160436_49423
     const sIsInteger = Math.round(s) == s;
@@ -267,7 +366,7 @@ class World {
     return (ds > 0 ? ceils - s : s - Math.floor(s)) / Math.abs(ds);
   }
 
-  castRay = (origin: vec3, direction: vec3, max_dist: number) => {
+  private castRay = (origin: vec3, direction: vec3, max_dist: number) => {
     // From "A Fast Voxel Traversal Algorithm for Ray Tracing"
     // by John Amanatides and Andrew Woo, 1987
     // <http://www.cse.yorku.ca/~amana/research/grid.pdf>
@@ -308,7 +407,7 @@ class World {
 
     // Avoids an infinite loop.
     // reject if the direction is zero
-    assert(vec3_dot(direction, direction) === 0, "direction vector is 0");
+    assert(vec3_dot(direction, direction) !== 0, "direction vector is 0");
 
     // Rescale from units of 1 cube-edge to units of 'direction' so we can
     // compare with 't'.
@@ -318,12 +417,12 @@ class World {
 
     while (true) {
       // get block here
-      const block = this.getBlock([x, y, z]);
-      if (block === null) {
+      const blockIndex = this.getBlock([x, y, z]);
+      if (blockIndex === null) {
         break;
       }
 
-      if (!this.blockManager.defs[block].transparent) {
+      if (this.blockManager.defs[blockIndex] !== Kind.Air) {
         return {
           coords: [x, y, z] as vec3,
           face
@@ -421,20 +520,46 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
   return blocks;
 }
 
-let q = 0;
+type Light = {
+  pos: vec3
+  dir: vec3
+}
+
+type ChunkMesh = {
+  solid: Vertex[],
+  transparent: Vertex[]
+  lights: Light[];
+}
 
 function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
 
-  const vertexes: Vertex[] = [];
+  // which faces we shouldn't render
+  function shouldRenderFace(thisblock: BlockDef, otherblock: BlockDef) {
+    // dont render air
+    if (thisblock.kind == Kind.Air) {
+      return false;
+    }
+    // dont render if both blocks are solid
+    if (thisblock.kind == Kind.Solid && otherblock.kind == Kind.Solid) {
+      return false;
+    }
+    // dont render if both blocks are the same type
+    if (thisblock == otherblock) {
+      return false;
+    }
+    return true;
+  }
+
+  const light:Light[] = [];
+  const solid: Vertex[] = [];
+  const translucent: Vertex[] = [];
 
   for (let x = 0; x < CHUNK_X_SIZE; x++) {
     for (let y = 0; y < CHUNK_Y_SIZE; y++) {
       for (let z = 0; z < CHUNK_Z_SIZE; z++) {
         const bi = blocks[chunkDataIndex(x, y, z)];
-        // check that its not transparent
-        if (bm.defs[bi].transparent) {
-          continue;
-        }
+        // block definition of this block
+        const thisblock = bm.defs[bi];
 
         // get chunk location
         const fx = x + offset[0];
@@ -454,8 +579,15 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
         const xoff = bm.tileTexXsize;
         const yoff = bm.tileTexYsize;
 
+        const blockCenter:vec3 = [fx + 0.5, fy + 0.5, fz + 0.5];
+
+        // the array to put the faces into depends on 
+        const vertexes = thisblock.kind === Kind.Solid
+        ? solid
+        : translucent;
+
         // left face
-        if (x === 0 || bm.defs[blocks[chunkDataIndex(x - 1, y, z)]].transparent) {
+        if (x === 0 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x - 1, y, z)]])) {
           const bx = bm.tileTexXsize * Face.LEFT;
           const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
@@ -464,9 +596,15 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+
+          if(thisblock.kind == Kind.Light) {
+              lights.push({
+                  pos: blockCenter,
+                  dir:   // TODO!
+          }
         }
         // right face
-        if (x === CHUNK_X_SIZE - 1 || bm.defs[blocks[chunkDataIndex(x + 1, y, z)]].transparent) {
+        if (x === CHUNK_X_SIZE - 1 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x + 1, y, z)]])) {
           const bx = bm.tileTexXsize * Face.RIGHT;
           const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
@@ -477,7 +615,7 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
         }
         // upper face
-        if (y === 0 || bm.defs[blocks[chunkDataIndex(x, y - 1, z)]].transparent) {
+        if (y === 0 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y - 1, z)]])) {
           const bx = bm.tileTexXsize * Face.UP;
           const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
@@ -488,7 +626,7 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
         }
         // lower face
-        if (y === CHUNK_Y_SIZE - 1 || bm.defs[blocks[chunkDataIndex(x, y + 1, z)]].transparent) {
+        if (y === CHUNK_Y_SIZE - 1 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y + 1, z)]])) {
           const bx = bm.tileTexXsize * Face.DOWN;
           const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v010, uv: [bx + xoff, by + 0.00] });
@@ -499,7 +637,7 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
         }
         // back face
-        if (z === 0 || bm.defs[blocks[chunkDataIndex(x, y, z - 1)]].transparent) {
+        if (z === 0 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y, z - 1)]])) {
           const bx = bm.tileTexXsize * Face.BACK;
           const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v000, uv: [bx + xoff, by + 0.00] });
@@ -510,7 +648,7 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
         }
         // front face
-        if (z === CHUNK_Z_SIZE - 1 || bm.defs[blocks[chunkDataIndex(x, y, z + 1)]].transparent) {
+        if (z === CHUNK_Z_SIZE - 1 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y, z + 1)]])) {
           const bx = bm.tileTexXsize * Face.FRONT;
           const by = bm.tileTexYsize * bi;
           vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
@@ -526,4 +664,103 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
   return vertexes;
 }
 
+function createMeshHighlight(coords: vec3, face: Face, bm: BlockManager) {
+  // how much to raise the face
+  const faceRaise = 0.05;
+  const off0 = -faceRaise;
+  const off1 = 1 + faceRaise;
+
+  const vertexes: Vertex[] = [];
+
+  // draw the value of the first pixel on there (probably black)
+  const bi = 0;
+
+  // get chunk location
+  const fx = coords[0];
+  const fy = coords[1];
+  const fz = coords[2];
+
+  // calculate vertexes
+  const v000: vec3 = [fx + off0, fy + off0, fz + off0];
+  const v100: vec3 = [fx + off1, fy + off0, fz + off0];
+  const v001: vec3 = [fx + off0, fy + off0, fz + off1];
+  const v101: vec3 = [fx + off1, fy + off0, fz + off1];
+  const v010: vec3 = [fx + off0, fy + off1, fz + off0];
+  const v110: vec3 = [fx + off1, fy + off1, fz + off0];
+  const v011: vec3 = [fx + off0, fy + off1, fz + off1];
+  const v111: vec3 = [fx + off1, fy + off1, fz + off1];
+
+  const xoff = bm.tileTexXsize;
+  const yoff = bm.tileTexYsize;
+
+  switch (face) {
+    case Face.LEFT: {
+      const bx = bm.tileTexXsize * Face.LEFT;
+      const by = bm.tileTexYsize * bi;
+      vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
+      vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
+      vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
+      vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
+      vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
+      vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+      break;
+    }
+    case Face.RIGHT: {
+      const bx = bm.tileTexXsize * Face.RIGHT;
+      const by = bm.tileTexYsize * bi;
+      vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
+      vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
+      vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
+      vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
+      vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
+      vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
+      break;
+    }
+    case Face.UP: {
+      const bx = bm.tileTexXsize * Face.UP;
+      const by = bm.tileTexYsize * bi;
+      vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
+      vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
+      vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
+      vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
+      vertexes.push({ position: v101, uv: [bx + xoff, by + yoff] });
+      vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
+      break;
+    }
+    case Face.DOWN: {
+      const bx = bm.tileTexXsize * Face.DOWN;
+      const by = bm.tileTexYsize * bi;
+      vertexes.push({ position: v010, uv: [bx + xoff, by + 0.00] });
+      vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
+      vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+      vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
+      vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
+      vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+      break;
+    }
+    case Face.BACK: {
+      const bx = bm.tileTexXsize * Face.BACK;
+      const by = bm.tileTexYsize * bi;
+      vertexes.push({ position: v000, uv: [bx + xoff, by + 0.00] });
+      vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
+      vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
+      vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
+      vertexes.push({ position: v110, uv: [bx + 0.00, by + yoff] });
+      vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
+      break;
+    }
+    case Face.FRONT: {
+      const bx = bm.tileTexXsize * Face.FRONT;
+      const by = bm.tileTexYsize * bi;
+      vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
+      vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
+      vertexes.push({ position: v001, uv: [bx + 0.00, by + 0.00] });
+      vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
+      vertexes.push({ position: v111, uv: [bx + xoff, by + yoff] });
+      vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
+      break;
+    }
+  }
+  return vertexes;
+}
 export default World;

@@ -127,6 +127,7 @@ class Camera {
   }
 
   getLoc = () => [this.pos[0], this.pos[1], this.pos[2]] as vec3
+  getFront = () => vec3_scale(this.basis.front, -1);
 }
 
 export default Camera
