@@ -57,8 +57,8 @@ export class BlockManager {
       }
       for (let face_index = 0; face_index < block.textures.length; face_index++) {
         const img = block.textures[face_index];
-        assert(img.height === tileSize, `block #{block_index} face #{face_index} height != {tileSize}`);
-        assert(img.width === tileSize, `block #{block_index} face #{face_index} width != {tileSize}`);
+        assert(img.height === tileSize, `block #${block_index} face #${face_index} height != ${tileSize}`);
+        assert(img.width === tileSize, `block #${block_index} face #${face_index} width != ${tileSize}`);
       }
     }
 
