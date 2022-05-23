@@ -122,8 +122,6 @@ export function mat4_to_uniform(m: mat4) {
   return [...c0, ...c1, ...c2, ...c3];
 }
 
-export type vec2 = [x: number, y: number];
-
 export function clamp(v: number, min: number, max: number) {
   return Math.min(Math.max(v, min), max);
 }

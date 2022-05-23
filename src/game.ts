@@ -2,77 +2,51 @@ import { makeNoise4D } from 'open-simplex-noise';
 import { createShader, createProgram } from './webgl';
 import Camera from './camera';
 import World from './world';
-import { vec3, vec2, mat4_to_uniform } from './utils';
+import { vec3, mat4_to_uniform } from './utils';
 import { BlockManager } from './block';
 
 export type Vertex = {
   position: vec3,
-  uv: vec2,
+  tuv: vec3,
 }
 
 const vs = `#version 300 es
 precision highp float;
 layout(location=0) in vec3 a_position;
-layout(location=1) in vec2 a_uv;
+layout(location=1) in vec3 a_tuv;
 
 // premultiplied mvp matrix
 uniform mat4 u_mvpMat;
 
-out vec2 v_uv;
+out vec3 v_tuv;
 
 void main() {
-   v_uv = a_uv;
+   v_tuv = a_tuv;
    gl_Position = u_mvpMat * vec4(a_position, 1.0);
 }
 `;
 
 const fs = `#version 300 es
 precision highp float;
-precision highp sampler2D;
+precision highp sampler2DArray;
 
 // the texture atlas for the blocks
-uniform sampler2D u_textureAtlas;
+uniform sampler2DArray u_textureAtlas;
 // the normal atlas for the blocks
-uniform sampler2D u_normalAtlas;
+uniform sampler2DArray u_normalAtlas;
 
 // texCoord
-in vec2 v_uv;
+in vec3 v_tuv;
 
 out vec4 v_outColor;
 
 void main() {
-  vec4 color = texture(u_textureAtlas, v_uv);
+  vec4 color = texture(u_textureAtlas, v_tuv);
 
   v_outColor = vec4(color.rgb*color.a, color.a);
 }
 `;
 
-function genPlane(xseg: number, yseg: number): vec2[] {
-
-  let vertexes: vec2[] = [];
-
-  for (let xi = 0; xi < xseg; xi++) {
-    const x = xi / xseg;
-    const nx = (xi + 1) / xseg;
-    for (let yi = 0; yi < yseg; yi++) {
-      const y = yi / yseg;
-      const ny = (yi + 1) / yseg;
-
-      // add two triangles
-
-      // upper triangle
-      vertexes.push([x, y]);
-      vertexes.push([nx, y]);
-      vertexes.push([x, ny]);
-      // lower triangle
-      vertexes.push([nx, y]);
-      vertexes.push([nx, ny]);
-      vertexes.push([x, ny]);
-    }
-  }
-
-  return vertexes;
-}
 function convertColor(color: number) {
   return [
     (color >> 16) / 0xFF,
@@ -112,8 +86,6 @@ class Game {
 
     this.gl = canvas.getContext('webgl2')!
 
-
-
     const program = createProgram(
       this.gl,
       [
@@ -127,9 +99,9 @@ class Game {
 
     // get attribute locations
     const positionLoc = this.gl.getAttribLocation(program, 'a_position');
-    const uvLoc = this.gl.getAttribLocation(program, 'a_uv');
+    const tuvLoc = this.gl.getAttribLocation(program, 'a_tuv');
 
-    this.world = new World(42, [0, 0, 0], this.gl, positionLoc, uvLoc, blockManager);
+    this.world = new World(42, this.camera.getLoc(), this.gl, positionLoc, tuvLoc, blockManager);
 
     // retrieve uniforms
     this.mvpMatLoc = this.gl.getUniformLocation(program, "u_mvpMat")!;

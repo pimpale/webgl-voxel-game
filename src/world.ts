@@ -1,6 +1,6 @@
 import { makeNoise3D } from 'open-simplex-noise';
 import { Vertex } from './game';
-import { vec2, vec3, vec3_add, vec3_sub, vec3_dot, assert } from './utils';
+import { vec3, vec3_add, vec3_sub, vec3_dot, assert } from './utils';
 import { BlockDef, BlockManager, Face, getNormal } from './block';
 
 const MAX_CHUNKS_TO_GEN = 1;
@@ -67,7 +67,7 @@ class World {
   private highlighted: boolean;
   private highlightVao: WebGLVertexArrayObject;
   private highlightBuffer: WebGLBuffer;
-  private highlightVertexes: number;
+  private highlightVertexCount: number;
 
   // list of active lights
   private lights: Light[];
@@ -86,7 +86,7 @@ class World {
   private blockManager: BlockManager
 
   private glPositionLoc: number;
-  private glUvLoc: number;
+  private glTuvLoc: number;
 
   getWorldChunkLoc = (cameraLoc: vec3) => [
     Math.floor(cameraLoc[0] / CHUNK_X_SIZE),
@@ -94,11 +94,11 @@ class World {
     Math.floor(cameraLoc[2] / CHUNK_Z_SIZE),
   ] as vec3;
 
-  constructor(seed: number, cameraLoc: vec3, gl: WebGL2RenderingContext, positionLoc: number, uvLoc: number, blockManager: BlockManager) {
+  constructor(seed: number, cameraLoc: vec3, gl: WebGL2RenderingContext, positionLoc: number, tuvLoc: number, blockManager: BlockManager) {
     this.gl = gl;
     this.blockManager = blockManager;
     this.glPositionLoc = positionLoc;
-    this.glUvLoc = uvLoc;
+    this.glTuvLoc = tuvLoc;
     this.seed = seed;
     this.noiseFn = makeNoise3D(seed);
     this.worldChunkCenterLoc = this.getWorldChunkLoc(cameraLoc);
@@ -112,38 +112,12 @@ class World {
     // initialize highlight
     {
       this.highlighted = false;
-      this.highlightVertexes = 0;
-      this.highlightVao = this.gl.createVertexArray()!;
-      this.gl.bindVertexArray(this.highlightVao);
-
-      this.highlightBuffer = this.gl.createBuffer()!;
-      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.highlightBuffer);
-      // setup our attributes to tell WebGL how to pull
-      // the data from the buffer above to the position attribute
-      this.gl.enableVertexAttribArray(this.glPositionLoc);
-      this.gl.vertexAttribPointer(
-        this.glPositionLoc,
-        3,              // size (num components)
-        this.gl.FLOAT,  // type of data in buffer
-        false,          // normalize
-        5 * 4,          // stride (0 = auto)
-        0 * 4,          // offset
-      );
-      this.gl.enableVertexAttribArray(this.glUvLoc);
-      this.gl.vertexAttribPointer(
-        this.glUvLoc,
-        2,              // size (num components)
-        this.gl.FLOAT,  // type of data in buffer
-        false,          // normalize
-        5 * 4,          // stride (0 = auto)
-        3 * 4,          // offset
-      );
+      const vertexes = createMeshHighlight([0, 0, 0], Face.UP, this.blockManager)
+      const graphics = this.createGraphics(vertexes);
+      this.highlightVertexCount = graphics.vertexCount;
+      this.highlightVao = graphics.vao;
+      this.highlightBuffer = graphics.buffer;
     }
-
-
-
-
-
 
     this.updateCameraLoc();
   }
@@ -204,7 +178,7 @@ class World {
   }
 
   createGraphics = (vertexes: Vertex[]) => {
-    const data = vertexes.flatMap(v => [...v.position, ...v.uv]);
+    const data = vertexes.flatMap(v => [...v.position, ...v.tuv]);
 
     const vao = this.gl.createVertexArray()!;
     this.gl.bindVertexArray(vao);
@@ -225,16 +199,16 @@ class World {
       3,              // size (num components)
       this.gl.FLOAT,  // type of data in buffer
       false,          // normalize
-      5 * 4,          // stride (0 = auto)
+      6 * 4,          // stride (0 = auto)
       0 * 4,          // offset
     );
-    this.gl.enableVertexAttribArray(this.glUvLoc);
+    this.gl.enableVertexAttribArray(this.glTuvLoc);
     this.gl.vertexAttribPointer(
-      this.glUvLoc,
-      2,              // size (num components)
+      this.glTuvLoc,
+      3,              // size (num components)
       this.gl.FLOAT,  // type of data in buffer
       false,          // normalize
-      5 * 4,          // stride (0 = auto)
+      6 * 4,          // stride (0 = auto)
       3 * 4,          // offset
     );
 
@@ -282,8 +256,8 @@ class World {
       this.highlighted = true;
       this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.highlightBuffer);
       const vertexes = createMeshHighlight(ray.coords, ray.face, this.blockManager);
-      this.highlightVertexes = vertexes.length;
-      const vertexData = vertexes.flatMap(v => [...v.position, ...v.uv]);
+      this.highlightVertexCount = vertexes.length;
+      const vertexData = vertexes.flatMap(v => [...v.position, ...v.tuv]);
       this.gl.bufferData(
         this.gl.ARRAY_BUFFER,
         new Float32Array(vertexData),
@@ -356,11 +330,6 @@ class World {
         this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.solidVertexCount);
       }
     }
-    // draw highlight
-    if (this.highlighted) {
-      this.gl.bindVertexArray(this.highlightVao);
-      this.gl.drawArrays(this.gl.TRIANGLES, 0, this.highlightVertexes);
-    }
     // draw translucent
     this.gl.depthMask(false);
     for (const coord of this.ready) {
@@ -369,6 +338,11 @@ class World {
         this.gl.bindVertexArray(chunk.graphics.transparentVao);
         this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.transparentVertexCount);
       }
+    }
+    // draw highlight
+    if (this.highlighted) {
+      this.gl.bindVertexArray(this.highlightVao);
+      this.gl.drawArrays(this.gl.TRIANGLES, 0, this.highlightVertexCount);
     }
   }
 
@@ -561,7 +535,7 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
     }
   }
   blocks[0] = 4;
-  blocks[1] = 4;
+  blocks[1] = 0;
   blocks[2] = 4;
   blocks[3] = 5;
 
@@ -629,9 +603,6 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager): ChunkM
         const v011: vec3 = [fx + 0, fy + 1, fz + 1];
         const v111: vec3 = [fx + 1, fy + 1, fz + 1];
 
-        const xoff = bm.tileTexXsize;
-        const yoff = bm.tileTexYsize;
-
         const blockCenter: vec3 = [fx + 0.5, fy + 0.5, fz + 0.5];
 
         // the array to put the faces into depends on 
@@ -641,14 +612,13 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager): ChunkM
 
         // left face
         if (x === 0 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x - 1, y, z)]])) {
-          const bx = bm.tileTexXsize * Face.LEFT;
-          const by = bm.tileTexYsize * bi;
-          vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
-          vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
-          vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
-          vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
-          vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
-          vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+          const v = bi*6 + Face.LEFT;
+          vertexes.push({ position: v000, tuv: [1, 0, v] });
+          vertexes.push({ position: v001, tuv: [0, 0, v] });
+          vertexes.push({ position: v010, tuv: [1, 1, v] });
+          vertexes.push({ position: v001, tuv: [0, 0, v] });
+          vertexes.push({ position: v011, tuv: [0, 1, v] });
+          vertexes.push({ position: v010, tuv: [1, 1, v] });
           if (thisblock.light) {
             lights.push({
               pos: blockCenter,
@@ -658,14 +628,13 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager): ChunkM
         }
         // right face
         if (x === CHUNK_X_SIZE - 1 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x + 1, y, z)]])) {
-          const bx = bm.tileTexXsize * Face.RIGHT;
-          const by = bm.tileTexYsize * bi;
-          vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
-          vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
-          vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
-          vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
-          vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
-          vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
+          const v = bi*6 + Face.RIGHT;
+          vertexes.push({ position: v100, tuv: [0, 0, v] });
+          vertexes.push({ position: v110, tuv: [0, 1, v] });
+          vertexes.push({ position: v101, tuv: [1, 0, v] });
+          vertexes.push({ position: v101, tuv: [1, 0, v] });
+          vertexes.push({ position: v110, tuv: [0, 1, v] });
+          vertexes.push({ position: v111, tuv: [1, 1, v] });
           if (thisblock.light) {
             lights.push({
               pos: blockCenter,
@@ -675,14 +644,13 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager): ChunkM
         }
         // upper face
         if (y === 0 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y - 1, z)]])) {
-          const bx = bm.tileTexXsize * Face.UP;
-          const by = bm.tileTexYsize * bi;
-          vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
-          vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
-          vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
-          vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
-          vertexes.push({ position: v101, uv: [bx + xoff, by + yoff] });
-          vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
+          const v = bi*6 + Face.UP;
+          vertexes.push({ position: v001, tuv: [1, 1, v] });
+          vertexes.push({ position: v000, tuv: [1, 0, v] });
+          vertexes.push({ position: v100, tuv: [0, 0, v] });
+          vertexes.push({ position: v001, tuv: [1, 1, v] });
+          vertexes.push({ position: v100, tuv: [0, 0, v] });
+          vertexes.push({ position: v101, tuv: [0, 1, v] });
           if (thisblock.light) {
             lights.push({
               pos: blockCenter,
@@ -692,14 +660,13 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager): ChunkM
         }
         // lower face
         if (y === CHUNK_Y_SIZE - 1 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y + 1, z)]])) {
-          const bx = bm.tileTexXsize * Face.DOWN;
-          const by = bm.tileTexYsize * bi;
-          vertexes.push({ position: v010, uv: [bx + xoff, by + 0.00] });
-          vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
-          vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
-          vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
-          vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
-          vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+          const v = bi*6 + Face.DOWN;
+          vertexes.push({ position: v010, tuv: [0, 0, v] });
+          vertexes.push({ position: v011, tuv: [0, 1, v] });
+          vertexes.push({ position: v110, tuv: [1, 0, v] });
+          vertexes.push({ position: v110, tuv: [1, 0, v] });
+          vertexes.push({ position: v011, tuv: [0, 1, v] });
+          vertexes.push({ position: v111, tuv: [1, 1, v] });
           if (thisblock.light) {
             lights.push({
               pos: blockCenter,
@@ -709,14 +676,13 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager): ChunkM
         }
         // back face
         if (z === 0 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y, z - 1)]])) {
-          const bx = bm.tileTexXsize * Face.BACK;
-          const by = bm.tileTexYsize * bi;
-          vertexes.push({ position: v000, uv: [bx + xoff, by + 0.00] });
-          vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
-          vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
-          vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
-          vertexes.push({ position: v110, uv: [bx + 0.00, by + yoff] });
-          vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
+          const v = bi*6 + Face.BACK;
+          vertexes.push({ position: v000, tuv: [0, 0, v] });
+          vertexes.push({ position: v010, tuv: [0, 1, v] });
+          vertexes.push({ position: v100, tuv: [1, 0, v] });
+          vertexes.push({ position: v100, tuv: [1, 0, v] });
+          vertexes.push({ position: v010, tuv: [0, 1, v] });
+          vertexes.push({ position: v110, tuv: [1, 1, v] });
           if (thisblock.light) {
             lights.push({
               pos: blockCenter,
@@ -726,14 +692,13 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager): ChunkM
         }
         // front face
         if (z === CHUNK_Z_SIZE - 1 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y, z + 1)]])) {
-          const bx = bm.tileTexXsize * Face.FRONT;
-          const by = bm.tileTexYsize * bi;
-          vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
-          vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
-          vertexes.push({ position: v001, uv: [bx + 0.00, by + 0.00] });
-          vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
-          vertexes.push({ position: v111, uv: [bx + xoff, by + yoff] });
-          vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
+          const v = bi*6 + Face.FRONT;
+          vertexes.push({ position: v011, tuv: [1, 1, v] });
+          vertexes.push({ position: v001, tuv: [1, 0, v] });
+          vertexes.push({ position: v101, tuv: [0, 0, v] });
+          vertexes.push({ position: v011, tuv: [1, 1, v] });
+          vertexes.push({ position: v101, tuv: [0, 0, v] });
+          vertexes.push({ position: v111, tuv: [0, 1, v] });
           if (thisblock.light) {
             lights.push({
               pos: blockCenter,
@@ -777,74 +742,65 @@ function createMeshHighlight(coords: vec3, face: Face, bm: BlockManager) {
   const v011: vec3 = [fx + off0, fy + off1, fz + off1];
   const v111: vec3 = [fx + off1, fy + off1, fz + off1];
 
-  const xoff = bm.tileTexXsize;
-  const yoff = bm.tileTexYsize;
-
   switch (face) {
     case Face.LEFT: {
-      const bx = bm.tileTexXsize * Face.LEFT;
-      const by = bm.tileTexYsize * bi;
-      vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
-      vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
-      vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
-      vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
-      vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
-      vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+      const v = bi*6 + Face.LEFT;
+      vertexes.push({ position: v000, tuv: [1, 0, v] });
+      vertexes.push({ position: v001, tuv: [0, 0, v] });
+      vertexes.push({ position: v010, tuv: [1, 1, v] });
+      vertexes.push({ position: v001, tuv: [0, 0, v] });
+      vertexes.push({ position: v011, tuv: [0, 1, v] });
+      vertexes.push({ position: v010, tuv: [1, 1, v] });
       break;
     }
     case Face.RIGHT: {
-      const bx = bm.tileTexXsize * Face.RIGHT;
-      const by = bm.tileTexYsize * bi;
-      vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
-      vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
-      vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
-      vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
-      vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
-      vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
+      const v = bi*6 + Face.RIGHT;
+      vertexes.push({ position: v100, tuv: [0, 0, v] });
+      vertexes.push({ position: v110, tuv: [0, 1, v] });
+      vertexes.push({ position: v101, tuv: [1, 0, v] });
+      vertexes.push({ position: v101, tuv: [1, 0, v] });
+      vertexes.push({ position: v110, tuv: [0, 1, v] });
+      vertexes.push({ position: v111, tuv: [1, 1, v] });
       break;
     }
     case Face.UP: {
-      const bx = bm.tileTexXsize * Face.UP;
-      const by = bm.tileTexYsize * bi;
-      vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
-      vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
-      vertexes.push({ position: v000, uv: [bx + 0.00, by + 0.00] });
-      vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
-      vertexes.push({ position: v101, uv: [bx + xoff, by + yoff] });
-      vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
+      const v = bi*6 + Face.UP;
+      vertexes.push({ position: v001, tuv: [1, 1, v] });
+      vertexes.push({ position: v000, tuv: [1, 0, v] });
+      vertexes.push({ position: v100, tuv: [0, 0, v] });
+      vertexes.push({ position: v001, tuv: [1, 1, v] });
+      vertexes.push({ position: v100, tuv: [0, 0, v] });
+      vertexes.push({ position: v101, tuv: [0, 1, v] });
       break;
     }
     case Face.DOWN: {
-      const bx = bm.tileTexXsize * Face.DOWN;
-      const by = bm.tileTexYsize * bi;
-      vertexes.push({ position: v010, uv: [bx + xoff, by + 0.00] });
-      vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
-      vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
-      vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
-      vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
-      vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+      const v = bi*6 + Face.DOWN;
+      vertexes.push({ position: v010, tuv: [0, 0, v] });
+      vertexes.push({ position: v011, tuv: [0, 1, v] });
+      vertexes.push({ position: v110, tuv: [1, 0, v] });
+      vertexes.push({ position: v110, tuv: [1, 0, v] });
+      vertexes.push({ position: v011, tuv: [0, 1, v] });
+      vertexes.push({ position: v111, tuv: [1, 1, v] });
       break;
     }
     case Face.BACK: {
-      const bx = bm.tileTexXsize * Face.BACK;
-      const by = bm.tileTexYsize * bi;
-      vertexes.push({ position: v000, uv: [bx + xoff, by + 0.00] });
-      vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
-      vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
-      vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
-      vertexes.push({ position: v110, uv: [bx + 0.00, by + yoff] });
-      vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
+      const v = bi*6 + Face.BACK;
+      vertexes.push({ position: v000, tuv: [0, 0, v] });
+      vertexes.push({ position: v010, tuv: [0, 1, v] });
+      vertexes.push({ position: v100, tuv: [1, 0, v] });
+      vertexes.push({ position: v100, tuv: [1, 0, v] });
+      vertexes.push({ position: v010, tuv: [0, 1, v] });
+      vertexes.push({ position: v110, tuv: [1, 1, v] });
       break;
     }
     case Face.FRONT: {
-      const bx = bm.tileTexXsize * Face.FRONT;
-      const by = bm.tileTexYsize * bi;
-      vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
-      vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
-      vertexes.push({ position: v001, uv: [bx + 0.00, by + 0.00] });
-      vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
-      vertexes.push({ position: v111, uv: [bx + xoff, by + yoff] });
-      vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
+      const v = bi*6 + Face.FRONT;
+      vertexes.push({ position: v011, tuv: [1, 1, v] });
+      vertexes.push({ position: v001, tuv: [1, 0, v] });
+      vertexes.push({ position: v101, tuv: [0, 0, v] });
+      vertexes.push({ position: v011, tuv: [1, 1, v] });
+      vertexes.push({ position: v101, tuv: [0, 0, v] });
+      vertexes.push({ position: v111, tuv: [0, 1, v] });
       break;
     }
   }
