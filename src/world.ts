@@ -1,7 +1,7 @@
 import { makeNoise3D } from 'open-simplex-noise';
 import { Vertex } from './game';
 import { vec2, vec3, vec3_add, vec3_sub, vec3_dot, assert } from './utils';
-import { BlockDef, BlockManager, Face, Kind } from './block';
+import { BlockDef, BlockManager, Face, getNormal } from './block';
 
 const MAX_CHUNKS_TO_GEN = 1;
 const MAX_CHUNKS_TO_MESH = 1;
@@ -203,10 +203,7 @@ class World {
     }
   }
 
-  private makeChunkGraphics = (blocks: Uint16Array, offset: vec3) => {
-    const vertexes = createMesh(blocks, offset, this.blockManager);
-    const nVertexes = vertexes.length;
-
+  createGraphics = (vertexes: Vertex[]) => {
     const data = vertexes.flatMap(v => [...v.position, ...v.uv]);
 
     const vao = this.gl.createVertexArray()!;
@@ -217,7 +214,7 @@ class World {
     this.gl.bufferData(
       this.gl.ARRAY_BUFFER,
       new Float32Array(data),
-      this.gl.STATIC_DRAW
+      this.gl.DYNAMIC_DRAW
     );
 
     // setup our attributes to tell WebGL how to pull
@@ -244,13 +241,38 @@ class World {
     return {
       vao,
       buffer,
-      nVertexes
+      vertexCount: vertexes.length,
+    }
+  }
+
+  private makeChunkGraphics = (blocks: Uint16Array, offset: vec3) => {
+    const { solid, transparent, lights } = createMesh(blocks, offset, this.blockManager);
+    const {
+      vao: solidVao,
+      buffer: solidBuffer,
+      vertexCount: solidVertexCount
+    } = this.createGraphics(solid);
+    const {
+      vao: transparentVao,
+      buffer: transparentBuffer,
+      vertexCount: transparentVertexCount
+    } = this.createGraphics(transparent);
+
+    return {
+      solidVao,
+      solidBuffer,
+      solidVertexCount,
+      transparentVao,
+      transparentBuffer,
+      transparentVertexCount
     };
   }
 
   deleteChunkGraphics = (graphics: ChunkGraphics) => {
-    this.gl.deleteBuffer(graphics.buffer);
-    this.gl.deleteVertexArray(graphics.vao);
+    this.gl.deleteBuffer(graphics.solidBuffer);
+    this.gl.deleteVertexArray(graphics.solidVao);
+    this.gl.deleteBuffer(graphics.transparentBuffer);
+    this.gl.deleteVertexArray(graphics.transparentVao);
   }
 
   update = (cameraLoc: vec3, cameraDir: vec3) => {
@@ -315,16 +337,38 @@ class World {
   }
 
   render = () => {
+    // enable depth tests
+    this.gl.enable(this.gl.DEPTH_TEST);
+
+    // remove reversed faces
+    this.gl.enable(this.gl.CULL_FACE)
+
+    // enable blending
+    this.gl.blendFunc(this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA)
+    this.gl.enable(this.gl.BLEND)
+
+    // draw solid
+    this.gl.depthMask(true);
     for (const coord of this.ready) {
       let chunk = this.chunk_map.get(coord);
       if (chunk !== undefined && chunk.graphics !== undefined) {
-        this.gl.bindVertexArray(chunk.graphics.vao);
-        this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.nVertexes);
+        this.gl.bindVertexArray(chunk.graphics.solidVao);
+        this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.solidVertexCount);
       }
     }
+    // draw highlight
     if (this.highlighted) {
       this.gl.bindVertexArray(this.highlightVao);
       this.gl.drawArrays(this.gl.TRIANGLES, 0, this.highlightVertexes);
+    }
+    // draw translucent
+    this.gl.depthMask(false);
+    for (const coord of this.ready) {
+      let chunk = this.chunk_map.get(coord);
+      if (chunk !== undefined && chunk.graphics !== undefined) {
+        this.gl.bindVertexArray(chunk.graphics.transparentVao);
+        this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.transparentVertexCount);
+      }
     }
   }
 
@@ -422,7 +466,7 @@ class World {
         break;
       }
 
-      if (this.blockManager.defs[blockIndex] !== Kind.Air) {
+      if (this.blockManager.defs[blockIndex].pointable) {
         return {
           coords: [x, y, z] as vec3,
           face
@@ -516,6 +560,10 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
       }
     }
   }
+  blocks[0] = 4;
+  blocks[1] = 4;
+  blocks[2] = 4;
+  blocks[3] = 5;
 
   return blocks;
 }
@@ -531,16 +579,16 @@ type ChunkMesh = {
   lights: Light[];
 }
 
-function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
+function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager): ChunkMesh {
 
   // which faces we shouldn't render
   function shouldRenderFace(thisblock: BlockDef, otherblock: BlockDef) {
     // dont render air
-    if (thisblock.kind == Kind.Air) {
+    if (thisblock.textures === undefined) {
       return false;
     }
     // dont render if both blocks are solid
-    if (thisblock.kind == Kind.Solid && otherblock.kind == Kind.Solid) {
+    if (!thisblock.transparent && !otherblock.transparent) {
       return false;
     }
     // dont render if both blocks are the same type
@@ -550,9 +598,9 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
     return true;
   }
 
-  const light:Light[] = [];
+  const lights: Light[] = [];
   const solid: Vertex[] = [];
-  const translucent: Vertex[] = [];
+  const transparent: Vertex[] = [];
 
   for (let x = 0; x < CHUNK_X_SIZE; x++) {
     for (let y = 0; y < CHUNK_Y_SIZE; y++) {
@@ -560,6 +608,11 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
         const bi = blocks[chunkDataIndex(x, y, z)];
         // block definition of this block
         const thisblock = bm.defs[bi];
+
+        // skip air
+        if (thisblock.textures === undefined) {
+          continue;
+        }
 
         // get chunk location
         const fx = x + offset[0];
@@ -579,12 +632,12 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
         const xoff = bm.tileTexXsize;
         const yoff = bm.tileTexYsize;
 
-        const blockCenter:vec3 = [fx + 0.5, fy + 0.5, fz + 0.5];
+        const blockCenter: vec3 = [fx + 0.5, fy + 0.5, fz + 0.5];
 
         // the array to put the faces into depends on 
-        const vertexes = thisblock.kind === Kind.Solid
-        ? solid
-        : translucent;
+        const vertexes = thisblock.transparent
+          ? transparent
+          : solid;
 
         // left face
         if (x === 0 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x - 1, y, z)]])) {
@@ -596,11 +649,11 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v001, uv: [bx + xoff, by + 0.00] });
           vertexes.push({ position: v010, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
-
-          if(thisblock.kind == Kind.Light) {
-              lights.push({
-                  pos: blockCenter,
-                  dir:   // TODO!
+          if (thisblock.light) {
+            lights.push({
+              pos: blockCenter,
+              dir: getNormal(Face.LEFT),
+            });
           }
         }
         // right face
@@ -613,6 +666,12 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v101, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v110, uv: [bx + xoff, by + yoff] });
+          if (thisblock.light) {
+            lights.push({
+              pos: blockCenter,
+              dir: getNormal(Face.RIGHT),
+            });
+          }
         }
         // upper face
         if (y === 0 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y - 1, z)]])) {
@@ -624,6 +683,12 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v001, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v101, uv: [bx + xoff, by + yoff] });
           vertexes.push({ position: v100, uv: [bx + xoff, by + 0.00] });
+          if (thisblock.light) {
+            lights.push({
+              pos: blockCenter,
+              dir: getNormal(Face.UP),
+            });
+          }
         }
         // lower face
         if (y === CHUNK_Y_SIZE - 1 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y + 1, z)]])) {
@@ -635,6 +700,12 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v110, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v111, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v011, uv: [bx + xoff, by + yoff] });
+          if (thisblock.light) {
+            lights.push({
+              pos: blockCenter,
+              dir: getNormal(Face.DOWN),
+            });
+          }
         }
         // back face
         if (z === 0 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y, z - 1)]])) {
@@ -646,6 +717,12 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v100, uv: [bx + 0.00, by + 0.00] });
           vertexes.push({ position: v110, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v010, uv: [bx + xoff, by + yoff] });
+          if (thisblock.light) {
+            lights.push({
+              pos: blockCenter,
+              dir: getNormal(Face.BACK),
+            });
+          }
         }
         // front face
         if (z === CHUNK_Z_SIZE - 1 || shouldRenderFace(thisblock, bm.defs[blocks[chunkDataIndex(x, y, z + 1)]])) {
@@ -657,11 +734,21 @@ function createMesh(blocks: Uint16Array, offset: vec3, bm: BlockManager) {
           vertexes.push({ position: v011, uv: [bx + 0.00, by + yoff] });
           vertexes.push({ position: v111, uv: [bx + xoff, by + yoff] });
           vertexes.push({ position: v101, uv: [bx + xoff, by + 0.00] });
+          if (thisblock.light) {
+            lights.push({
+              pos: blockCenter,
+              dir: getNormal(Face.FRONT),
+            });
+          }
         }
       }
     }
   }
-  return vertexes;
+  return {
+    solid,
+    transparent,
+    lights
+  };
 }
 
 function createMeshHighlight(coords: vec3, face: Face, bm: BlockManager) {

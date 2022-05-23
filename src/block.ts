@@ -9,54 +9,51 @@ export enum Face {
   BACK = 5,
 }
 
-export function getNormal(face:Face):vec3 {
-  switch(face) {
-      case Face.LEFT: {
-          return [-0, 0, 0]
-      }
-      case Face.RIGHT:{
-          return [0, 1, 0]
-      }
-      case Face.UP:{
-          return [0, 1, 0]
-      }
-      case Face.DOWN:{
-          break;
-      }
-      case Face.FRONT:{
-          break;
-      }
-      case Face.BACK:{
-          break;
-      }
+export function getNormal(face: Face) {
+  switch (face) {
+    case Face.LEFT: {
+      return [-1, 0, 0] as vec3
+    }
+    case Face.RIGHT: {
+      return [+1, 0, 0] as vec3
+    }
+    case Face.UP: {
+      return [0, -1, 0] as vec3
+    }
+    case Face.DOWN: {
+      return [0, +1, 0] as vec3
+    }
+    case Face.BACK: {
+      return [0, 0, -1] as vec3
+    }
+    case Face.FRONT: {
+      return [0, 0, +1] as vec3
+    }
   }
 }
 
-export enum Kind {
-    Air,
-    Solid,
-    Light,
-    Transparent
-}
+export type BlockTextures =[
+    left: HTMLImageElement,
+    right: HTMLImageElement,
+    up: HTMLImageElement,
+    down: HTMLImageElement,
+    front: HTMLImageElement,
+    back: HTMLImageElement
+  ];
 
-export type BlockDef =
-  { name: string } &
-  (
-    {
-      kind: Kind.Air
-    } |
-    {
-      kind: Kind.Solid | Kind.Light | Kind.Transparent,
-      textures: [
-        left: HTMLImageElement,
-        right: HTMLImageElement,
-        up: HTMLImageElement,
-        down: HTMLImageElement,
-        front: HTMLImageElement,
-        back: HTMLImageElement
-      ]
-    }
-  )
+export type BlockDef = {
+  // name of block
+  name: string,
+  // if the block is solid to pointer
+  pointable: boolean,
+  // if the block emits light
+  light: boolean,
+  // if the block should be treated with transparency
+  // light implies this. Otherwise only the block face will be lit up
+  transparent: boolean
+  // if undefined the block is invisible
+  textures?: BlockTextures
+}
 
 // TODO: create a const here that a texture atlas using the defs
 // Each row represents a block. The first row will be ignored, since air is transparent
@@ -82,7 +79,7 @@ export class BlockManager {
     // validate tiles
     for (let block_index = 0; block_index < this.defs.length; block_index++) {
       const block = this.defs[block_index];
-      if (block.transparent) {
+      if (block.textures === undefined) {
         continue;
       }
       for (let face_index = 0; face_index < block.textures.length; face_index++) {
@@ -103,11 +100,11 @@ export class BlockManager {
 
 
     // atlas must be big enough to store all the images
-    const atlasXsize = this.tileSize*6;
-    const atlasYsize = this.tileSize*this.defs.length;
+    const atlasXsize = this.tileSize * 6;
+    const atlasYsize = this.tileSize * this.defs.length;
 
     // initialize image by loading with black for now
-    const data = new Uint8Array(atlasXsize*atlasYsize*4);
+    const data = new Uint8Array(atlasXsize * atlasYsize * 4);
 
     // (required to initialize before doing texSubImage2D)
     gl.texImage2D(
@@ -126,7 +123,7 @@ export class BlockManager {
     for (let block_index = 0; block_index < this.defs.length; block_index++) {
       const block = this.defs[block_index];
       // do nothing if transparent block
-      if (block.transparent) {
+      if (block.textures === undefined) {
         continue;
       }
       // write each face

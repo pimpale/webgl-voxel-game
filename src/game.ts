@@ -41,9 +41,9 @@ in vec2 v_uv;
 out vec4 v_outColor;
 
 void main() {
-  vec3 color = texture(u_textureAtlas, v_uv).rgb;
+  vec4 color = texture(u_textureAtlas, v_uv);
 
-  v_outColor = vec4(color, 1.0);
+  v_outColor = vec4(color.rgb*color.a, color.a);
 }
 `;
 
@@ -111,7 +111,6 @@ class Game {
     this.camera = new Camera([0, 0, 0], this.canvas);
 
     this.gl = canvas.getContext('webgl2')!
-    this.gl.enable(this.gl.DEPTH_TEST);
 
 
 
