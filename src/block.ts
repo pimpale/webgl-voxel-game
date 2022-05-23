@@ -91,8 +91,8 @@ export class BlockManager {
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
-    // initialize image by loading with black for now
-    const data = new Uint8Array(this.defs.length * this.tileSize * this.tileSize * 6 * 4);
+    // initialize image by loading with transparent black for now
+    const data = new Uint8Array(this.tileSize * this.tileSize * this.defs.length *  6 * 4);
 
     // (required to initialize before doing texSubImage3D)
     gl.texImage3D(

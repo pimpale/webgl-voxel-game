@@ -16,6 +16,10 @@ export function vec3_norm(a: vec3): vec3 {
   return a.map(x => x / dist) as vec3;
 }
 
+export function vec3_dup([a1, a2, a3]: vec3): vec3{
+    return [a1, a2, a3]
+}
+
 export function vec3_dot([a1, a2, a3]: vec3, [b1, b2, b3]: vec3): number {
   return a1 * b1 + a2 * b2 + a3 * b3;
 }
@@ -131,3 +135,13 @@ export function assert(cond: boolean, error: string) {
     throw new Error(error)
   }
 }
+
+export function mod(n: number, d: number) {
+  const ret = n % d;
+  if (ret < 0) {
+    return ret + d;
+  } else {
+    return ret;
+  }
+}
+
