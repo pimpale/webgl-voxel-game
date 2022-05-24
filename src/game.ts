@@ -4,7 +4,7 @@ import World from './world';
 import { vec3, mat4_to_uniform } from './utils';
 import { BlockManager } from './block';
 import { Camera } from './camera';
-import { Entity, PlayerControlComponent, CameraComponent } from './entity-component-system';
+import { Entity, PlayerControlComponent, CameraComponent, PhysicsComponent, BlockInteractionComponent } from './entity-component-system';
 
 const worldup: vec3 = [0.0, -1.0, 0.0];
 
@@ -50,15 +50,8 @@ void main() {
 }
 `;
 
-function convertColor(color: number) {
-  return [
-    (color >> 16) / 0xFF,
-    ((color >> 8) & 0xFF) / 0xFF,
-    (color & 0xFF) / 0xFF,
-  ];
+function makePlayer() {
 }
-
-
 
 class Game {
 
@@ -116,22 +109,29 @@ class Game {
     const tuvLoc = this.gl.getAttribLocation(program, 'a_tuv');
 
     this.world = new World(0, this.camera.getPos(), this.gl, positionLoc, tuvLoc, blockManager);
-    this.entityList = [
-      new Entity([
-        // this component handles player interaction with controls
-        new PlayerControlComponent(
-          // the worldup for player controls can be different than the camera
-          // if you want the player to be upside down or sideways but keep the same camera view
-          worldup,
-          // click on the canvas to grab the cursor
-          this.canvas
-        ),
-        // this component updates the camera to follow the entity
-        new CameraComponent(this.camera),
-        // TODO: add a physicsComponent that handles jumping, collision handling (should get requests from player control component)
-        // TODO: add a worldInteraction component that handles pointing and hitting stuff (should use camera dir and world)
-      ])
-    ];
+
+    // construct player
+    const playerPhysics = new PhysicsComponent(this.world);
+    const playerBlockInteraction = new BlockInteractionComponent(this.camera, this.world);
+    const player = new Entity([
+      // this component handles player interaction with controls
+      new PlayerControlComponent(
+        // click on the canvas to grab the cursor
+        this.canvas,
+        // physics to use
+        playerPhysics,
+        // block interaction to use
+        playerBlockInteraction
+      ),
+      // this component updates the camera to follow the entity
+      new CameraComponent(this.camera),
+      // handle physics
+      playerPhysics,
+      // break blocks
+      playerBlockInteraction,
+    ], worldup)
+
+    this.entityList = [player];
 
     // retrieve uniforms
     this.mvpMatLoc = this.gl.getUniformLocation(program, "u_mvpMat")!;
@@ -176,7 +176,7 @@ class Game {
     }
 
     // update the world with the camera position
-    this.world.update(this.camera.getPos(), this.camera.getDir());
+    this.world.update(this.camera.getPos());
 
     {
       // set uniform

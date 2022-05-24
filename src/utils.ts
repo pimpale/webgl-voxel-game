@@ -145,3 +145,14 @@ export function mod(n: number, d: number) {
   }
 }
 
+// takes in color as a hexadecimal number, returns a vec3 of color components
+export function convertColor(color: number) {
+  return [
+    (color >> 16) / 0xFF,
+    ((color >> 8) & 0xFF) / 0xFF,
+    (color & 0xFF) / 0xFF,
+  ] as vec3;
+}
+
+
+

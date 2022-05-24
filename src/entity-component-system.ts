@@ -1,5 +1,7 @@
 import { RADIANS, vec3, vec3_cross, vec3_add, vec3_scale, vec3_norm, clamp } from './utils';
 import { Camera, CameraBasis } from './camera'
+import World, { Highlight } from './world'
+import { getNormal } from './block';
 
 type GlobalComponentData = {
 
@@ -11,16 +13,35 @@ export abstract class Component {
   abstract applySystem: (e: Entity) => void;
 }
 
+
+
+// https://stackoverflow.com/questions/1349404/generate-random-string-characters-in-javascript
+// generateId :: Integer -> String
+function generateId(len: number) {
+  // dec2hex :: Integer -> String
+  // i.e. 0-255 -> '00'-'ff'
+  function dec2hex(dec: number) {
+    return dec.toString(16).padStart(2, "0")
+  }
+  const arr = new Uint8Array(len / 2)
+  window.crypto.getRandomValues(arr)
+  return Array.from(arr, dec2hex).join('')
+}
+
 export class Entity {
   // location of the entity
   pos: vec3;
   // vector the entity is looking at
   dir: vec3;
+  // the up of this entity.
+  // Gravity should affect it this way
+  worldup: vec3;
 
   components: Component[]
 
-  constructor(components: Component[], pos?: vec3, dir?: vec3) {
+  constructor(components: Component[], worldup: vec3, pos?: vec3, dir?: vec3) {
     this.components = components;
+    this.worldup = worldup;
     this.pos = pos === undefined ? [0, 0, 0] : pos;
     this.dir = dir === undefined ? [1, 0, 0] : dir;
   }
@@ -35,10 +56,11 @@ export class Entity {
 
 export class PlayerControlComponent extends Component {
 
+  private physics: PhysicsComponent;
+  private blockInteraction: BlockInteractionComponent;
+
   // the element that is clicked to regain control after clicking away
   private readonly grabControlElement: HTMLElement;
-
-  readonly worldup: vec3;
 
   // pitch and yaw values in radians
   private pitch: number = 0.0;
@@ -53,9 +75,10 @@ export class PlayerControlComponent extends Component {
   private leftMouseDown = false;
   private rightMouseDown = false;
 
-  constructor(worldup: vec3, grabControlElement: HTMLElement) {
+  constructor(grabControlElement: HTMLElement, physics: PhysicsComponent, blockInteraction: BlockInteractionComponent) {
     super();
-    this.worldup = worldup;
+    this.physics = physics;
+    this.blockInteraction = blockInteraction;
     this.grabControlElement = grabControlElement;
     window.addEventListener("keypress", e => {
       if (e.key === "f") {
@@ -82,7 +105,7 @@ export class PlayerControlComponent extends Component {
         return;
       }
 
-      const rotscale = 0.001;
+      const rotscale = 0.0015;
 
       this.yaw -= e.movementX * rotscale;
       this.pitch -= e.movementY * rotscale;
@@ -110,59 +133,59 @@ export class PlayerControlComponent extends Component {
 
   applySystem = (e: Entity) => {
     // build basis vectors
-    const basis = new CameraBasis(this.pitch, this.yaw, this.worldup);
+    const basis = new CameraBasis(this.pitch, this.yaw, e.worldup);
     // the player basis is in the opposite direction as the direction the camera looks
     e.dir = vec3_scale(basis.front, -1);
 
     // only do things if control is locked
     if (this.controlsEnabled) {
-      const forwarddir = vec3_norm(vec3_cross(basis.right, this.worldup));
+      const forwarddir = vec3_norm(vec3_cross(basis.right, e.worldup));
       let movscale = this.fast ? 0.1 : 0.02;
       if (this.fly) {
         // fly
         if (this.keys.has('KeyW')) {
-          e.pos = vec3_add(e.pos, vec3_scale(forwarddir, movscale));
+          this.physics.go(vec3_scale(forwarddir, movscale));
         }
         if (this.keys.has('KeyS')) {
-          e.pos = vec3_add(e.pos, vec3_scale(forwarddir, -movscale));
+          this.physics.go(vec3_scale(forwarddir, -movscale));
         }
         if (this.keys.has('KeyA')) {
-          e.pos = vec3_add(e.pos, vec3_scale(basis.right, movscale));
+          this.physics.go(vec3_scale(basis.right, movscale));
         }
         if (this.keys.has('KeyD')) {
-          e.pos = vec3_add(e.pos, vec3_scale(basis.right, -movscale));
+          this.physics.go(vec3_scale(basis.right, -movscale));
         }
         if (this.keys.has('ShiftLeft')) {
-          e.pos = vec3_add(e.pos, vec3_scale(this.worldup, -movscale));
+          this.physics.go(vec3_scale(e.worldup, -movscale));
         }
         if (this.keys.has('Space')) {
-          e.pos = vec3_add(e.pos, vec3_scale(this.worldup, movscale));
+          this.physics.go(vec3_scale(e.worldup, movscale));
         }
       } else {
         // walk
         if (this.keys.has('KeyW')) {
-          e.pos = vec3_add(e.pos, vec3_scale(forwarddir, movscale));
+          this.physics.go(vec3_scale(forwarddir, movscale));
         }
         if (this.keys.has('KeyS')) {
-          e.pos = vec3_add(e.pos, vec3_scale(forwarddir, -movscale));
+          this.physics.go(vec3_scale(forwarddir, -movscale));
         }
         if (this.keys.has('KeyA')) {
-          e.pos = vec3_add(e.pos, vec3_scale(basis.right, movscale));
+          this.physics.go(vec3_scale(basis.right, movscale));
         }
         if (this.keys.has('KeyD')) {
-          e.pos = vec3_add(e.pos, vec3_scale(basis.right, -movscale));
+          this.physics.go(vec3_scale(basis.right, -movscale));
         }
         if (this.keys.has('Space')) {
-            requestJump()
+          this.physics.jump()
         }
       }
 
       // break/place block
       if (this.leftMouseDown) {
-        // submit request to
-
+        this.blockInteraction.breakSelectedBlock();
+      } else if(this.rightMouseDown) {
+        this.blockInteraction.placeSelectedBlock();
       }
-
 
 
     }
@@ -185,14 +208,89 @@ export class CameraComponent extends Component {
   }
 }
 
+// TODO: this component should be implementing collision code
 export class PhysicsComponent extends Component {
-  // gravity pulls you in the opposite of this direction
-  private readonly worldup: vec3;
+  private world: World;
 
-  private
+  private upVel = 0;
 
-  constructor(gravity: vec3) {
+  private wantGo: vec3 = [0, 0, 0];
+  private wantJump = false;
+
+  constructor(world: World) {
     super();
+    this.world = world;
+  }
 
+  go = (disp: vec3) => {
+    this.wantGo = vec3_add(this.wantGo, disp);
+  }
+
+  jump = () => {
+    this.wantJump = true;
+  }
+
+  // TODO: Apply collision detection here.
+  // get world status and set entity location to something
+  // also do jumping using up velocity
+  applySystem = (e: Entity) => {
+    // TODO: this system only lets you fly
+    e.pos = vec3_add(e.pos, this.wantGo);
+    this.wantGo = [0, 0, 0];
+  };
+}
+
+// this component manages selecting and breaking blocks
+export class BlockInteractionComponent extends Component {
+  readonly uniqueId: string;
+  private camera: Camera;
+  private world: World;
+
+  private ray: Highlight | null = null;
+
+  private lastBlockTime = 0;
+
+  constructor(camera: Camera, world: World,) {
+    super();
+    this.uniqueId = generateId(32);
+    this.camera = camera;
+    this.world = world;
+  }
+
+  // tell the world to break any block we have selected
+  breakSelectedBlock = () => {
+    const now = Date.now();
+    // figure out where camera is pointing
+    if (this.ray) {
+      // check that we arent breaking too many blocks at once
+      if (this.lastBlockTime + 50 < now ) {
+        this.world.setBlock(this.ray.coords, 0);
+        this.lastBlockTime = now;
+      }
+    }
+  }
+
+  // tell the world to break any block we have selected
+  placeSelectedBlock = () => {
+    const now = Date.now();
+    // figure out where camera is pointing
+    if (this.ray) {
+      // check that we arent breaking too many blocks at once
+      if (this.lastBlockTime + 50 < now ) {
+        const newBlockCoord= vec3_add(this.ray.coords, getNormal(this.ray.face));
+        this.world.setBlock(newBlockCoord, 4);
+        this.lastBlockTime = now;
+      }
+    }
+  }
+
+  // figure out where camera is looking and break block
+  applySystem = (e: Entity) => {
+    this.ray = this.world.castRay(this.camera.getPos(), this.camera.getDir(), 100);
+    if (this.ray) {
+      this.world.addHighlight(this.uniqueId, this.ray);
+    } else {
+      this.world.removeHighlight(this.uniqueId);
+    }
   }
 }
