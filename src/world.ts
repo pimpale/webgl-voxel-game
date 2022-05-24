@@ -1,5 +1,4 @@
 import { makeNoise3D } from 'open-simplex-noise';
-import { Vertex } from './game';
 import { vec3, vec3_add, vec3_sub, vec3_dot, assert, mod } from './utils';
 import { BlockDef, BlockManager, Face, getNormal } from './block';
 import { HighlightSpanKind } from 'typescript';
@@ -10,9 +9,9 @@ const CHUNK_GEN_COST = 1;
 const CHUNK_MESH_COST = 1;
 const CHUNK_MKGRAPHICS_COST = 1;
 
-const CHUNK_X_SIZE = 16;
-const CHUNK_Y_SIZE = 16;
-const CHUNK_Z_SIZE = 16;
+const CHUNK_X_SIZE = 24;
+const CHUNK_Y_SIZE = 24;
+const CHUNK_Z_SIZE = 24;
 
 
 // how many chunks to render
@@ -26,13 +25,9 @@ type Graphics = {
   vertexCount: number;
 }
 
-type ChunkGraphics = {
-}
-
-
 type Chunk = {
   blocks?: Uint16Array,
-  mesh?: { stale: boolean, solid: Vertex[], transparent: Vertex[] }
+  mesh?: { stale: boolean, solid: BlockFace[], transparent: BlockFace[], lights: BlockFace[] }
   graphics?: { stale: boolean, solid: Graphics, transparent: Graphics }
 }
 
@@ -74,9 +69,6 @@ class World {
   // list of active <id, highlight> pairs
   private highlights: Map<string, Graphics>;
 
-  // list of active lights
-  private lights: Light[];
-
   // hashmap storing chunks
   private chunk_map: Map<string, Chunk>;
 
@@ -101,23 +93,11 @@ class World {
     this.noiseFn = makeNoise3D(seed);
     this.worldChunkCenterLoc = this.getWorldChunkLoc(cameraLoc);
     this.chunk_map = new Map();
-    this.lights = [];
     this.highlights = new Map();
     this.updateCameraLoc();
   }
 
-  createGraphics = (vertexes: Vertex[]) => {
-    const data = new Float32Array(vertexes.length * 6);
-    for (let i = 0; i < vertexes.length; i++) {
-      const { position: [px, py, pz], tuv: [t, u, v] } = vertexes[i];
-      data[i * 6 + 0] = px;
-      data[i * 6 + 1] = py;
-      data[i * 6 + 2] = pz;
-      data[i * 6 + 3] = t;
-      data[i * 6 + 4] = u;
-      data[i * 6 + 5] = v;
-    }
-
+  createGraphics = (data: Float32Array) => {
     const vao = this.gl.createVertexArray()!;
     this.gl.bindVertexArray(vao);
 
@@ -149,7 +129,7 @@ class World {
     return {
       vao,
       buffer,
-      vertexCount: vertexes.length,
+      vertexCount: data.length/6,
     }
   }
 
@@ -159,18 +139,18 @@ class World {
   }
 
 
+  private shouldBeLoaded = (worldChunkCoords: vec3) => {
+    const disp = vec3_sub(worldChunkCoords, this.worldChunkCenterLoc);
+    return (disp[0] >= -RENDER_RADIUS_X && disp[0] <= RENDER_RADIUS_X) &&
+      (disp[1] >= -RENDER_RADIUS_Y && disp[1] <= RENDER_RADIUS_Y) &&
+      (disp[2] >= -RENDER_RADIUS_Z && disp[2] <= RENDER_RADIUS_Z);
+  }
   // if the camera new chunk coords misalign with our current chunk coords then
   private updateCameraLoc = () => {
-    const shouldBeLoaded = (worldChunkCoords: vec3) => {
-      const disp = vec3_sub(worldChunkCoords, this.worldChunkCenterLoc);
-      return (disp[0] >= -RENDER_RADIUS_X && disp[0] <= RENDER_RADIUS_X) &&
-        (disp[1] >= -RENDER_RADIUS_Y && disp[1] <= RENDER_RADIUS_Y) &&
-        (disp[2] >= -RENDER_RADIUS_Z && disp[2] <= RENDER_RADIUS_Z);
-    }
 
     // delete any generated chunks
     for (const [coord, chunk] of this.chunk_map) {
-      if (!shouldBeLoaded(JSON.parse(coord))) {
+      if (!this.shouldBeLoaded(JSON.parse(coord))) {
         if (chunk.graphics !== undefined) {
           this.deleteGraphics(chunk.graphics.solid);
           this.deleteGraphics(chunk.graphics.transparent);
@@ -197,10 +177,10 @@ class World {
     const highlight = this.highlights.get(id);
     const vertexes = createMeshHighlight(ray.coords, ray.face, this.blockManager);
     if (highlight === undefined) {
-      this.highlights.set(id, this.createGraphics(vertexes));
+      //this.highlights.set(id, this.createGraphics(vertexes));
     } else {
       this.deleteGraphics(highlight);
-      this.highlights.set(id, this.createGraphics(vertexes));
+      //this.highlights.set(id, this.createGraphics(vertexes));
     }
   }
 
@@ -212,7 +192,7 @@ class World {
     }
   }
 
-  markNeighboringChunksStale = (chunkLoc: vec3) => {
+  neighboringChunkLocs = (chunkLoc: vec3): vec3[] => {
     const offsets: vec3[] = [
       [-1, 0, 0],
       [+1, 0, 0],
@@ -221,13 +201,7 @@ class World {
       [0, 0, -1],
       [0, 0, +1],
     ];
-
-    for (const offset of offsets) {
-      const chunk = this.chunk_map.get(JSON.stringify(vec3_add(chunkLoc, offset)));
-      if (chunk !== undefined && chunk.mesh !== undefined) {
-        chunk.mesh.stale = true;
-      }
-    }
+    return offsets.map(x => vec3_add(chunkLoc, x));
   }
 
   getChunkBlocksIfExists = (coord: vec3) => {
@@ -243,21 +217,40 @@ class World {
     let current_cost = 0;
 
     for (const [coord, chunk] of this.chunk_map) {
+      const parsedCoord = JSON.parse(coord) as vec3;
       if (chunk.blocks === undefined) {
-        const parsedCoord = JSON.parse(coord) as vec3;
         chunk.blocks = genChunkData(parsedCoord, this.noiseFn);
-        // mark neighboring blocks as stale so they can get rid of excess faces
-        this.markNeighboringChunksStale(parsedCoord);
+        // mark neighboring chunks as stale
+        for (const loc of this.neighboringChunkLocs(parsedCoord)) {
+          const chunk = this.chunk_map.get(JSON.stringify(loc));
+          if (chunk && chunk.mesh) {
+            chunk.mesh.stale = true
+          }
+        }
         current_cost += CHUNK_GEN_COST;
       }
 
       if (current_cost > 1) { break; }
 
-      const parsedCoord = JSON.parse(coord);
       const offset: vec3 = [parsedCoord[0] * CHUNK_X_SIZE, parsedCoord[1] * CHUNK_Y_SIZE, parsedCoord[2] * CHUNK_Z_SIZE];
 
       if (chunk.mesh === undefined || chunk.mesh.stale) {
-        const { solid, transparent } = createMesh(
+        // if a neighboring chunk should be loaded but isn't generated then skip
+        let dontLoad = false;
+        for (const neighborLoc of this.neighboringChunkLocs(parsedCoord)) {
+          if (this.shouldBeLoaded(neighborLoc)) {
+            const chunk = this.chunk_map.get(JSON.stringify(neighborLoc));
+            if (chunk === undefined || chunk.blocks === undefined) {
+              dontLoad = true;
+            }
+          }
+        }
+
+        if (dontLoad) {
+          continue;
+        }
+
+        const { solid, transparent, lights } = createMesh(
           // offset to store at
           offset,
           // block manager
@@ -281,6 +274,7 @@ class World {
         chunk.mesh = {
           solid,
           transparent,
+          lights,
           stale: false
         }
         if (chunk.graphics !== undefined) {
@@ -298,8 +292,8 @@ class World {
           this.deleteGraphics(chunk.graphics.transparent);
         }
         chunk.graphics = {
-          solid: this.createGraphics(chunk.mesh.solid),
-          transparent: this.createGraphics(chunk.mesh.transparent),
+          solid: this.createGraphics(writeMesh(chunk.mesh.solid)),
+          transparent: this.createGraphics(writeMesh(chunk.mesh.transparent)),
           stale: false
         }
         current_cost += CHUNK_MKGRAPHICS_COST;
@@ -381,7 +375,12 @@ class World {
         chunk.mesh.stale = true;
       }
       // TODO: could be optimized, only mark when x y and z are bordering another chunk
-      this.markNeighboringChunksStale(chunkCoord);
+      for (const loc of this.neighboringChunkLocs(chunkCoord)) {
+        const chunk = this.chunk_map.get(JSON.stringify(loc));
+        if (chunk && chunk.mesh) {
+          chunk.mesh.stale = true
+        }
+      }
       return true;
     } else {
       return false;
@@ -563,15 +562,10 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
   return blocks;
 }
 
-type Light = {
-  pos: vec3
-  dir: vec3
-}
-
 type ChunkMesh = {
-  solid: Vertex[],
-  transparent: Vertex[]
-  lights: Light[];
+  solid: BlockFace[],
+  transparent: BlockFace[],
+  lights: BlockFace[]
 }
 
 function shouldRender(thisblock: BlockDef, otherblock: BlockDef) {
@@ -590,6 +584,12 @@ function shouldRender(thisblock: BlockDef, otherblock: BlockDef) {
   return true;
 }
 
+type BlockFace = {
+  bi: number,
+  face: Face,
+  cubeLoc: vec3,
+}
+
 function createMesh(
   offset: vec3,
   bm: BlockManager,
@@ -601,16 +601,16 @@ function createMesh(
   backBlocks: Uint16Array,
   frontBlocks: Uint16Array,
 ): ChunkMesh {
-
-
-  const lights: Light[] = [];
-  const solid: Vertex[] = [];
-  const transparent: Vertex[] = [];
+  const lights: BlockFace[] = [];
+  const solid: BlockFace[] = [];
+  const transparent: BlockFace[] = [];
 
   for (let x = 0; x < CHUNK_X_SIZE; x++) {
     for (let y = 0; y < CHUNK_Y_SIZE; y++) {
       for (let z = 0; z < CHUNK_Z_SIZE; z++) {
         const bi = blocks[chunkDataIndex(x, y, z)];
+        const cubeLoc = [offset[0] + x, offset[1] + y, offset[2] + z] as vec3;
+
         // block definition of this block
         const thisblock = bm.defs[bi];
 
@@ -619,25 +619,8 @@ function createMesh(
           continue;
         }
 
-        // get chunk location
-        const fx = x + offset[0];
-        const fy = y + offset[1];
-        const fz = z + offset[2];
-
-        // calculate vertexes
-        const v000: vec3 = [fx + 0, fy + 0, fz + 0];
-        const v100: vec3 = [fx + 1, fy + 0, fz + 0];
-        const v001: vec3 = [fx + 0, fy + 0, fz + 1];
-        const v101: vec3 = [fx + 1, fy + 0, fz + 1];
-        const v010: vec3 = [fx + 0, fy + 1, fz + 0];
-        const v110: vec3 = [fx + 1, fy + 1, fz + 0];
-        const v011: vec3 = [fx + 0, fy + 1, fz + 1];
-        const v111: vec3 = [fx + 1, fy + 1, fz + 1];
-
-        const blockCenter: vec3 = [fx + 0.5, fy + 0.5, fz + 0.5];
-
         // the array to put the faces into depends on 
-        const vertexes = thisblock.transparent
+        const dest = thisblock.transparent
           ? transparent
           : solid;
 
@@ -647,18 +630,10 @@ function createMesh(
             ? shouldRender(thisblock, bm.defs[leftBlocks[chunkDataIndex(CHUNK_X_SIZE - 1, y, z)]])
             : shouldRender(thisblock, bm.defs[blocks[chunkDataIndex(x - 1, y, z)]])
         ) {
-          const v = bi * 6 + Face.LEFT;
-          vertexes.push({ position: v000, tuv: [1, 0, v] });
-          vertexes.push({ position: v001, tuv: [0, 0, v] });
-          vertexes.push({ position: v010, tuv: [1, 1, v] });
-          vertexes.push({ position: v001, tuv: [0, 0, v] });
-          vertexes.push({ position: v011, tuv: [0, 1, v] });
-          vertexes.push({ position: v010, tuv: [1, 1, v] });
+          const val = { bi, cubeLoc, face: Face.LEFT };
+          dest.push(val);
           if (thisblock.light) {
-            lights.push({
-              pos: blockCenter,
-              dir: getNormal(Face.LEFT),
-            });
+            lights.push(val);
           }
         }
         // right face
@@ -667,18 +642,10 @@ function createMesh(
             ? shouldRender(thisblock, bm.defs[rightBlocks[chunkDataIndex(0, y, z)]])
             : shouldRender(thisblock, bm.defs[blocks[chunkDataIndex(x + 1, y, z)]])
         ) {
-          const v = bi * 6 + Face.RIGHT;
-          vertexes.push({ position: v100, tuv: [0, 0, v] });
-          vertexes.push({ position: v110, tuv: [0, 1, v] });
-          vertexes.push({ position: v101, tuv: [1, 0, v] });
-          vertexes.push({ position: v101, tuv: [1, 0, v] });
-          vertexes.push({ position: v110, tuv: [0, 1, v] });
-          vertexes.push({ position: v111, tuv: [1, 1, v] });
+          const val = { bi, cubeLoc, face: Face.RIGHT };
+          dest.push(val);
           if (thisblock.light) {
-            lights.push({
-              pos: blockCenter,
-              dir: getNormal(Face.RIGHT),
-            });
+            lights.push(val);
           }
         }
         // upper face
@@ -687,18 +654,10 @@ function createMesh(
             ? shouldRender(thisblock, bm.defs[upBlocks[chunkDataIndex(x, CHUNK_Y_SIZE - 1, z)]])
             : shouldRender(thisblock, bm.defs[blocks[chunkDataIndex(x, y - 1, z)]])
         ) {
-          const v = bi * 6 + Face.UP;
-          vertexes.push({ position: v001, tuv: [1, 1, v] });
-          vertexes.push({ position: v000, tuv: [1, 0, v] });
-          vertexes.push({ position: v100, tuv: [0, 0, v] });
-          vertexes.push({ position: v001, tuv: [1, 1, v] });
-          vertexes.push({ position: v100, tuv: [0, 0, v] });
-          vertexes.push({ position: v101, tuv: [0, 1, v] });
+          const val = { bi, cubeLoc, face: Face.UP };
+          dest.push(val);
           if (thisblock.light) {
-            lights.push({
-              pos: blockCenter,
-              dir: getNormal(Face.UP),
-            });
+            lights.push(val);
           }
         }
         // lower face
@@ -707,18 +666,10 @@ function createMesh(
             ? shouldRender(thisblock, bm.defs[downBlocks[chunkDataIndex(x, 0, z)]])
             : shouldRender(thisblock, bm.defs[blocks[chunkDataIndex(x, y + 1, z)]])
         ) {
-          const v = bi * 6 + Face.DOWN;
-          vertexes.push({ position: v010, tuv: [0, 0, v] });
-          vertexes.push({ position: v011, tuv: [0, 1, v] });
-          vertexes.push({ position: v110, tuv: [1, 0, v] });
-          vertexes.push({ position: v110, tuv: [1, 0, v] });
-          vertexes.push({ position: v011, tuv: [0, 1, v] });
-          vertexes.push({ position: v111, tuv: [1, 1, v] });
+          const val = { bi, cubeLoc, face: Face.DOWN };
+          dest.push(val);
           if (thisblock.light) {
-            lights.push({
-              pos: blockCenter,
-              dir: getNormal(Face.DOWN),
-            });
+            lights.push(val);
           }
         }
         // back face
@@ -727,18 +678,10 @@ function createMesh(
             ? shouldRender(thisblock, bm.defs[backBlocks[chunkDataIndex(x, y, CHUNK_Z_SIZE - 1)]])
             : shouldRender(thisblock, bm.defs[blocks[chunkDataIndex(x, y, z - 1)]])
         ) {
-          const v = bi * 6 + Face.BACK;
-          vertexes.push({ position: v000, tuv: [0, 0, v] });
-          vertexes.push({ position: v010, tuv: [0, 1, v] });
-          vertexes.push({ position: v100, tuv: [1, 0, v] });
-          vertexes.push({ position: v100, tuv: [1, 0, v] });
-          vertexes.push({ position: v010, tuv: [0, 1, v] });
-          vertexes.push({ position: v110, tuv: [1, 1, v] });
+          const val = { bi, cubeLoc, face: Face.BACK };
+          dest.push(val);
           if (thisblock.light) {
-            lights.push({
-              pos: blockCenter,
-              dir: getNormal(Face.BACK),
-            });
+            lights.push(val);
           }
         }
         // front face
@@ -747,18 +690,10 @@ function createMesh(
             ? shouldRender(thisblock, bm.defs[frontBlocks[chunkDataIndex(x, y, 0)]])
             : shouldRender(thisblock, bm.defs[blocks[chunkDataIndex(x, y, z + 1)]])
         ) {
-          const v = bi * 6 + Face.FRONT;
-          vertexes.push({ position: v011, tuv: [1, 1, v] });
-          vertexes.push({ position: v001, tuv: [1, 0, v] });
-          vertexes.push({ position: v101, tuv: [0, 0, v] });
-          vertexes.push({ position: v011, tuv: [1, 1, v] });
-          vertexes.push({ position: v101, tuv: [0, 0, v] });
-          vertexes.push({ position: v111, tuv: [0, 1, v] });
+          const val = { bi, cubeLoc, face: Face.FRONT };
+          dest.push(val);
           if (thisblock.light) {
-            lights.push({
-              pos: blockCenter,
-              dir: getNormal(Face.FRONT),
-            });
+            lights.push(val);
           }
         }
       }
@@ -771,11 +706,98 @@ function createMesh(
   };
 }
 
+
+function writeMesh(faces: BlockFace[]): Float32Array {
+  const data = new Float32Array(faces.length * 6 * 6);
+
+  let i = 0;
+  for (const { bi, face, cubeLoc } of faces) {
+    // get chunk location
+    const [fx, fy, fz] = cubeLoc;
+
+    // calculate vertexes
+    const v000: vec3 = [fx + 0, fy + 0, fz + 0];
+    const v100: vec3 = [fx + 1, fy + 0, fz + 0];
+    const v001: vec3 = [fx + 0, fy + 0, fz + 1];
+    const v101: vec3 = [fx + 1, fy + 0, fz + 1];
+    const v010: vec3 = [fx + 0, fy + 1, fz + 0];
+    const v110: vec3 = [fx + 1, fy + 1, fz + 0];
+    const v011: vec3 = [fx + 0, fy + 1, fz + 1];
+    const v111: vec3 = [fx + 1, fy + 1, fz + 1];
+
+    // the texture id to use
+    const v = bi * 6 + face;
+
+    switch (face) {
+      case Face.LEFT: {
+        data.set(v000, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set([1, 1, v], i); i += 3;
+        break;
+      }
+      case Face.RIGHT: {
+        data.set(v100, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v111, i); i += 3; data.set([1, 1, v], i); i += 3;
+        break;
+      }
+      case Face.UP: {
+        data.set(v001, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v000, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set([0, 1, v], i); i += 3;
+        break;
+      }
+      case Face.DOWN: {
+        data.set(v010, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v111, i); i += 3; data.set([1, 1, v], i); i += 3;
+        break;
+      }
+      case Face.BACK: {
+        data.set(v000, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set([1, 1, v], i); i += 3;
+        break;
+      }
+      case Face.FRONT: {
+        data.set(v011, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v111, i); i += 3; data.set([0, 1, v], i); i += 3;
+        break;
+      }
+    }
+  }
+  return data;
+}
+
 function createMeshHighlight(coords: vec3, face: Face, bm: BlockManager) {
   // how much to raise the face
   const faceRaise = 0.05;
   const off0 = -faceRaise;
   const off1 = 1 + faceRaise;
+
+  type Vertex = {
+      position: vec3,
+      tuv: vec3,
+  };
 
   const vertexes: Vertex[] = [];
 
@@ -859,6 +881,9 @@ function createMeshHighlight(coords: vec3, face: Face, bm: BlockManager) {
       break;
     }
   }
+
+
+
   return vertexes;
 }
 export default World;

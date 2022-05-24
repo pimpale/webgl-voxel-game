@@ -8,11 +8,6 @@ import { Entity, PlayerControlComponent, CameraComponent, PhysicsComponent, Bloc
 
 const worldup: vec3 = [0.0, -1.0, 0.0];
 
-export type Vertex = {
-  position: vec3,
-  tuv: vec3,
-}
-
 const vs = `#version 300 es
 precision highp float;
 layout(location=0) in vec3 a_position;
