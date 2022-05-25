@@ -45,8 +45,6 @@ void main() {
 }
 `;
 
-function makePlayer() {
-}
 
 class Game {
 
@@ -103,7 +101,7 @@ class Game {
     const positionLoc = this.gl.getAttribLocation(program, 'a_position');
     const tuvLoc = this.gl.getAttribLocation(program, 'a_tuv');
 
-    this.world = new World(0, this.camera.getPos(), this.gl, positionLoc, tuvLoc, blockManager);
+    this.world = new World(0, this.camera.getPos(), worldup, this.gl, positionLoc, tuvLoc, blockManager);
 
     // construct player
     const playerPhysics = new PhysicsComponent(this.world);
@@ -147,8 +145,6 @@ class Game {
     this.normalAtlas = this.blockManager.buildTextureAtlas(this.gl);
     // Tell the shader to get the normalAtlas texture from texture unit 1
     this.gl.uniform1i(this.normalAtlasLoc, 1);
-
-
 
     // resize canvas on window
     this.resizeCanvas();
