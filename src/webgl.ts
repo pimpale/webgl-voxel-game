@@ -8,10 +8,14 @@ export function createShader(gl: WebGL2RenderingContext, shader_type: number, so
   return shader;
 }
 
-export function createProgram(gl: WebGL2RenderingContext, shaders: WebGLShader[]) {
+export function createProgram(gl: WebGL2RenderingContext, shaders: WebGLShader[], attributes: Map<number, string>) {
   const program = gl.createProgram()!;
   for (const shader of shaders) {
     gl.attachShader(program, shader);
+  }
+
+  for (const [index, attribute] of attributes) {
+    gl.bindAttribLocation(program, index, attribute);
   }
 
   gl.linkProgram(program);

@@ -1,7 +1,6 @@
 import { makeNoise3D } from 'open-simplex-noise';
 import { vec3, vec3_add, vec3_sub, vec3_dot, assert, mod, mat4_perspective, RADIANS, mat4_look_at, mat4_mul, mat4_to_uniform, mat4 } from './utils';
 import { BlockDef, BlockManager, Face, getNormal } from './block';
-import { HighlightSpanKind } from 'typescript';
 import { createProgram, createShader } from './webgl';
 
 // We assign each step a cost.
@@ -42,20 +41,51 @@ type Chunk = {
 }
 
 
-// these are used to render the shadow map
-const shadowmap_vs = `#version 300 es
+const vs = `#version 300 es
 precision highp float;
-layout(location=0) in vec3 a_position;
-
+in vec3 a_position;
+in vec3 a_tuv;
 // premultiplied mvp matrix
 uniform mat4 u_mvpMat;
+out vec3 v_tuv;
+void main() {
+   v_tuv = a_tuv;
+   gl_Position = u_mvpMat * vec4(a_position, 1.0);
+}
+`;
 
+const fs = `#version 300 es
+precision highp float;
+precision highp sampler2DArray;
+
+// the texture atlas for the blocks
+uniform sampler2DArray u_textureAtlas;
+// the normal atlas for the blocks
+uniform sampler2DArray u_normalAtlas;
+
+// texCoord
+in vec3 v_tuv;
+
+out vec4 v_outColor;
+
+void main() {
+  vec4 color = texture(u_textureAtlas, v_tuv);
+  v_outColor = vec4(color.rgb*color.a, color.a);
+}
+`;
+
+const shadow_vs = `#version 300 es
+precision highp float;
+in vec3 a_position;
+uniform mat4 u_mvpMat;
 void main() {
    gl_Position = u_mvpMat * vec4(a_position, 1.0);
 }
 `;
 
-const shadowmap_fs = `#version 300 es
+
+const shadow_fs = `#version 300 es
+precision highp float;
 out vec4 v_outColor;
 void main() {
   v_outColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -68,9 +98,16 @@ export type Highlight = {
 }
 
 class World {
-  // private shadowProgram: WebGLProgram;
-  // private shadowPositionLoc: number;
-  // private shadowMvpMatLoc: WebGLUniformLocation;
+  private readonly POSITION_LOC = 0;
+  private readonly TUV_LOC = 1;
+
+  private renderProgram: WebGLProgram;
+  private textureAtlas: WebGLTexture;
+  private renderMvpMatLoc: WebGLUniformLocation;
+  private renderTextureAtlasLoc: WebGLUniformLocation;
+
+  private shadowProgram: WebGLProgram;
+  private shadowMvpMatLoc: WebGLUniformLocation;
 
   readonly emptyChunk = new Uint16Array(CHUNK_X_SIZE * CHUNK_Y_SIZE * CHUNK_Z_SIZE);
 
@@ -90,20 +127,15 @@ class World {
   private gl: WebGL2RenderingContext;
   private blockManager: BlockManager
 
-  private glPositionLoc: number;
-  private glTuvLoc: number;
-
   getWorldChunkLoc = (cameraLoc: vec3) => [
     Math.floor(cameraLoc[0] / CHUNK_X_SIZE),
     Math.floor(cameraLoc[1] / CHUNK_Y_SIZE),
     Math.floor(cameraLoc[2] / CHUNK_Z_SIZE),
   ] as vec3;
 
-  constructor(seed: number, cameraLoc: vec3, worldup: vec3, gl: WebGL2RenderingContext, positionLoc: number, tuvLoc: number, blockManager: BlockManager) {
+  constructor(seed: number, cameraLoc: vec3, worldup: vec3, gl: WebGL2RenderingContext, blockManager: BlockManager) {
     this.gl = gl;
     this.blockManager = blockManager;
-    this.glPositionLoc = positionLoc;
-    this.glTuvLoc = tuvLoc;
     this.seed = seed;
     this.worldup = worldup;
     this.noiseFn = makeNoise3D(seed);
@@ -111,22 +143,51 @@ class World {
     this.chunk_map = new Map();
     this.highlights = new Map();
 
-    // // create program
-    // this.shadowProgram = createProgram(
-    //   this.gl,
-    //   [
-    //     createShader(this.gl, this.gl.VERTEX_SHADER, shadowmap_vs),
-    //     createShader(this.gl, this.gl.FRAGMENT_SHADER, shadowmap_fs),
-    //   ]
-    // )!;
+    this.renderProgram = createProgram(
+      this.gl,
+      [
+        createShader(this.gl, this.gl.VERTEX_SHADER, vs),
+        createShader(this.gl, this.gl.FRAGMENT_SHADER, fs),
+      ],
+      new Map([
+        [this.POSITION_LOC, 'a_position'],
+        [this.TUV_LOC, 'a_tuv'],
+      ])
+    )!;
 
-    // this.shadowPositionLoc = this.gl.getAttribLocation(this.shadowProgram, 'a_position');
-    // this.shadowMvpMatLoc = this.gl.getUniformLocation(this.shadowProgram, "u_mvpMat")!;
+    // set this program as current
+    this.gl.useProgram(this.renderProgram);
+
+    // retrieve uniforms
+    this.renderMvpMatLoc = this.gl.getUniformLocation(this.renderProgram, "u_mvpMat")!;
+    this.renderTextureAtlasLoc = this.gl.getUniformLocation(this.renderProgram, "u_textureAtlas")!;
+
+    // set texture 0 as current
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    // create texture atlas at texture 0
+    this.textureAtlas = this.blockManager.buildTextureAtlas(this.gl);
+    // Tell the shader to get the textureAtlas texture from texture unit 0
+    this.gl.uniform1i(this.renderTextureAtlasLoc, 0);
+
+
+    // create program
+    this.shadowProgram = createProgram(
+      this.gl,
+      [
+        createShader(this.gl, this.gl.VERTEX_SHADER, shadow_vs),
+        createShader(this.gl, this.gl.FRAGMENT_SHADER, shadow_fs),
+      ],
+      new Map([
+        [this.POSITION_LOC, 'a_position'],
+      ])
+    )!;
+    this.gl.useProgram(this.shadowProgram);
+    this.shadowMvpMatLoc = this.gl.getUniformLocation(this.shadowProgram, "u_mvpMat")!;
 
     this.updateCameraLoc();
   }
 
-  createGraphics = (data: Float32Array, conf?: {loc:number, size:number}[]) => {
+  createGraphics = (data: Float32Array, conf?: { loc: number, size: number }[]) => {
     const vao = this.gl.createVertexArray()!;
     this.gl.bindVertexArray(vao);
 
@@ -136,18 +197,18 @@ class World {
 
     // setup our attributes to tell WebGL how to pull
     // the data from the buffer above to the attributes
-    this.gl.enableVertexAttribArray(this.glPositionLoc);
+    this.gl.enableVertexAttribArray(this.POSITION_LOC);
     this.gl.vertexAttribPointer(
-      this.glPositionLoc,
+      this.POSITION_LOC,
       3,              // size (num components)
       this.gl.FLOAT,  // type of data in buffer
       false,          // normalize
       6 * 4,          // stride (0 = auto)
       0 * 4,          // offset
     );
-    this.gl.enableVertexAttribArray(this.glTuvLoc);
+    this.gl.enableVertexAttribArray(this.TUV_LOC);
     this.gl.vertexAttribPointer(
-      this.glTuvLoc,
+      this.TUV_LOC,
       3,              // size (num components)
       this.gl.FLOAT,  // type of data in buffer
       false,          // normalize
@@ -239,13 +300,13 @@ class World {
     }
   }
 
-  private createLightGraphics = (face: BlockFace):LightGraphics => {
-    // actual location of the light
+  private createLightGraphics = (face: BlockFace): LightGraphics => {
+    // actual location of the light is in the center of the block
     const lightLoc = vec3_add(face.cubeLoc, [0.5, 0.5, 0.5]);
     // note that the near plane starts slightly after the face
     // the far plane is less than the chunk size
     const projection = mat4_perspective(RADIANS(90.0), 1, 0.6, 10.0);
-    const view = mat4_look_at(lightLoc, vec3_add(lightLoc, getNormal(face.face)), this.worldup);
+    const view = mat4_look_at(lightLoc, vec3_add(lightLoc, getNormal(face.face)), [1,2,2]);
     // compute final matrix
     const mvp = mat4_mul(projection, view);
 
@@ -281,6 +342,22 @@ class World {
       tex: depthTexture,
       fb: depthFramebuffer
     }
+  }
+
+  private renderShadowMap = (lg: LightGraphics, solid: Graphics) => {
+    this.gl.useProgram(this.shadowProgram);
+    // set settings
+    this.gl.enable(this.gl.DEPTH_TEST);
+    this.gl.enable(this.gl.CULL_FACE)
+    this.gl.disable(this.gl.BLEND)
+    this.gl.depthMask(true);
+
+    // render to framebuffer
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, lg.fb);
+
+    // actually draw
+    this.gl.bindVertexArray(solid.vao);
+    this.gl.drawArrays(this.gl.TRIANGLES, 0, solid.vertexCount);
   }
 
   adjacentChunkLocs = (chunkLoc: vec3): vec3[] => {
@@ -413,37 +490,43 @@ class World {
         }
 
         // contains our new lights
-        const newGraphicsMap:Map<string, LightGraphics> = new Map();
+        const newGraphicsMap: Map<string, LightGraphics> = new Map();
 
         // handle the light faces in mesh
         for (const lightFace of chunk.mesh.lights) {
+            console.log(lightFace);
           const lightFaceStr = JSON.stringify(lightFace);
           let lg = chunk.lights.graphics.get(lightFaceStr);
-          if(lg === undefined) {
-              // create light if not existent
-              newGraphicsMap.set(lightFaceStr, this.createLightGraphics(lightFace));
+          if (lg === undefined) {
+            // create light if not existent
+            newGraphicsMap.set(lightFaceStr, this.createLightGraphics(lightFace));
           } else {
-              // otherwise move light from old map to new map
-              newGraphicsMap.set(lightFaceStr, lg);
-              chunk.lights.graphics.delete(lightFaceStr);
+            // otherwise move light from old map to new map
+            newGraphicsMap.set(lightFaceStr, lg);
+            chunk.lights.graphics.delete(lightFaceStr);
           }
         }
 
         // delete whatever is left in the old map.
-        for(const lg of chunk.lights.graphics.values()) {
-            this.deleteLight(lg);
+        for (const lg of chunk.lights.graphics.values()) {
+          this.deleteLight(lg);
         }
 
         // set the new graphics map as our current graphics map
         chunk.lights.graphics = newGraphicsMap;
 
         // now iterate through our graphics map and render world
-        for(const lg of chunk.lights.graphics.values()) {
+        for (const lg of chunk.lights.graphics.values()) {
+          // TODO: render the 6 neighboring chunks around the block
+          this.renderShadowMap(lg, chunk.graphics.solid);
         }
 
         // mark not stale
         chunk.lights.stale = false;
+        current_cost += CHUNK_RENDERLIGHT_COST;
       }
+
+      if (current_cost > 1) { break CHUNK_UPDATE_LOOP; }
     }
 
     const cameraChunkLoc = this.getWorldChunkLoc(cameraLoc);
@@ -457,7 +540,14 @@ class World {
     }
   }
 
-  render = () => {
+  render = (mvpMat: mat4) => {
+    // use render program
+    this.gl.useProgram(this.renderProgram);
+    // render to canvas
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+    // bind matrix
+    this.gl.uniformMatrix4fv(this.renderMvpMatLoc, false, mat4_to_uniform(mvpMat));
+
     // enable depth tests
     this.gl.enable(this.gl.DEPTH_TEST);
 

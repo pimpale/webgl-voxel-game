@@ -79,7 +79,7 @@ export function mat4_look_at(eye: vec3, at: vec3, up: vec3) {
   // Check for NaN, indicating a degenerate cross product, which
   // happens if eye == at, or if at minus eye is parallel to up.
   if (!x.every(i => i == i))
-    throw "Two parallel vectors were given";
+    throw "two parallel vectors were given";
 
   // Enforce right-handed coordinate system.
   z = vec3_scale(z, -1);
