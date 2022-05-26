@@ -71,7 +71,6 @@ void main() {
 const fs = `#version 300 es
 precision highp int;
 precision highp float;
-precision highp sampler2D;
 precision highp sampler2DArray;
 
 // the texture atlas for the blocks
@@ -80,7 +79,7 @@ uniform sampler2DArray u_textureAtlas;
 uniform int u_lightNumber;
 
 // the light depth maps
-uniform sampler2D u_lightDepthArr;
+uniform sampler2DArray u_lightDepthArr;
 
 // positions according to lights
 in vec4 v_lightspaceCoords[${N_LIGHTS}];
@@ -93,7 +92,7 @@ out vec4 v_outColor;
 void main() {
   vec4 color = texture(u_textureAtlas, v_tuv);
 
-  float lightSum = 0.6;
+  float lightSum = 0.3;
 
   v_outColor = vec4(color.rgb*color.a*lightSum, color.a);
 
@@ -114,11 +113,12 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     // the 'r' channel has the depth values
-    float projectedDepth = texture(u_lightDepthArr, texCoord).r;
+    float projectedDepth = texture(u_lightDepthArr, vec3(texCoord , i)).r;
     float shadowLight = (inRange && projectedDepth <= currentDepth) ? 0.0 : 0.3;
     lightSum += shadowLight;
     if(inRange) {
-      v_outColor = texture(u_lightDepthArr, texCoord);
+      vec3 col = texture(u_lightDepthArr, vec3(texCoord , i)).rgb;
+      v_outColor = vec4(col, 1.0);
     }
   }
 }
@@ -393,24 +393,90 @@ class World {
   // we use a 3d texture to store all of the textures in a cube
   private createLightTex = (): WebGLTexture => {
     const depthTexture = this.gl.createTexture()!;
+    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, depthTexture);
+    this.gl.texImage3D(
+      this.gl.TEXTURE_2D_ARRAY,      // target
+      0,                    // mip level
+      this.gl.DEPTH_COMPONENT16, // internal format
+      this.SHADOWMAP_SIZE,   // width
+      this.SHADOWMAP_SIZE,   // height
+      N_LIGHTS,           // depth
+      0,                  // border
+      this.gl.DEPTH_COMPONENT, // format
+      this.gl.UNSIGNED_SHORT,           // type
+      null,              // data
+    );
+    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+
+    return depthTexture;
+  }
+
+  private renderShadowMap0 = (tex00: WebGLTexture, i: number, mvpMat: mat4, solid: Graphics) => {
+    this.gl.useProgram(this.shadowProgram);
+    // bind matrix
+    this.gl.uniformMatrix4fv(this.shadowMvpMatLoc, false, mat4_to_uniform(mvpMat));
+
+    this.camera.foo = 100;
+    this.camera.mvp = mvpMat;
+
+    // set settings
+    this.gl.viewport(0, 0, this.SHADOWMAP_SIZE, this.SHADOWMAP_SIZE);
+    this.gl.enable(this.gl.DEPTH_TEST);
+    this.gl.enable(this.gl.CULL_FACE)
+    this.gl.disable(this.gl.BLEND)
+    this.gl.depthMask(true);
+
+    const depthTexture = this.gl.createTexture();
     this.gl.bindTexture(this.gl.TEXTURE_2D, depthTexture);
     this.gl.texImage2D(
       this.gl.TEXTURE_2D,      // target
-      0,                    // mip level
-      this.gl.DEPTH_COMPONENT32F, // internal format
+      0,                  // mip level
+      this.gl.DEPTH_COMPONENT16, // internal format
       this.SHADOWMAP_SIZE,   // width
       this.SHADOWMAP_SIZE,   // height
       0,                  // border
       this.gl.DEPTH_COMPONENT, // format
-      this.gl.FLOAT,           // type
-      null,              // data
-    );
+      this.gl.UNSIGNED_SHORT,           // type
+      null);              // data
     this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
     this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
     this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
     this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
 
-    return depthTexture;
+
+    const frameBuffer = this.gl.createFramebuffer();
+    this.gl.bindFramebuffer(this.gl.DRAW_FRAMEBUFFER, frameBuffer);
+
+    this.gl.framebufferTexture2D(
+      this.gl.DRAW_FRAMEBUFFER,       // target
+      this.gl.DEPTH_ATTACHMENT,  // attachment point
+      this.gl.TEXTURE_2D,        // texture target
+      depthTexture,         // texture
+      0                   // mip level
+    );
+
+
+    var status = this.gl.checkFramebufferStatus(this.gl.DRAW_FRAMEBUFFER);
+    if (status != this.gl.FRAMEBUFFER_COMPLETE) {
+      console.log('fb status: ' + status.toString(16));
+      return;
+    }
+
+
+
+    // actually draw
+
+    this.gl.enable(this.gl.DEPTH_TEST); // Need to write depth
+    this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
+
+    this.gl.bindVertexArray(solid.vao);
+    this.gl.drawArrays(this.gl.TRIANGLES, 0, solid.vertexCount);
+
+    // delete framebuffer
+    //this.gl.deleteFramebuffer(depthFramebuffer);
   }
 
   private renderShadowMap = (tex: WebGLTexture, i: number, mvpMat: mat4, solid: Graphics) => {
@@ -421,25 +487,23 @@ class World {
     this.camera.foo = 100;
     this.camera.mvp = mvpMat;
 
-    // create framebuffer to use
-    const depthFramebuffer = this.gl.createFramebuffer()!;
-    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
-    this.gl.framebufferTexture2D(
-      this.gl.FRAMEBUFFER,       // target
-      this.gl.DEPTH_ATTACHMENT,  // attachment point
-      this.gl.TEXTURE_2D,      // texture target
-      tex,                       // texture
-      0,                         // mip level
-    );
-
     // set settings
     this.gl.viewport(0, 0, this.SHADOWMAP_SIZE, this.SHADOWMAP_SIZE);
     this.gl.enable(this.gl.DEPTH_TEST);
     this.gl.enable(this.gl.CULL_FACE)
-    this.gl.enable(this.gl.BLEND)
-    this.gl.depthMask(false);
-    this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
+    this.gl.disable(this.gl.BLEND)
+    this.gl.depthMask(true);
 
+    // create framebuffer to use
+    const depthFramebuffer = this.gl.createFramebuffer()!;
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
+    this.gl.framebufferTextureLayer(
+      this.gl.FRAMEBUFFER,       // target
+      this.gl.DEPTH_ATTACHMENT,  // attachment point
+      tex,                       // texture
+      0,                         // mip level
+      i,                         // layer
+    );
 
     // actually draw
     this.gl.bindVertexArray(solid.vao);
@@ -647,7 +711,7 @@ class World {
 
         // bind this chunk's lights to tex 1
         this.gl.activeTexture(this.gl.TEXTURE1);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, chunk.lights.tex);
+        this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, chunk.lights.tex);
 
         // set n lights correctly
         this.gl.uniform1i(this.renderLightNumber, chunk.lights.matrixes.length);
