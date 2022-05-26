@@ -160,7 +160,7 @@ class World {
   private readonly POSITION_LOC = 0;
   private readonly TUV_LOC = 1;
 
-  private readonly SHADOWMAP_SIZE = 64;
+  private readonly SHADOWMAP_SIZE = 512;
 
   private textureAtlas: WebGLTexture;
 
@@ -181,7 +181,7 @@ class World {
   private worldChunkCenterLoc: vec3;
 
   // TODO: get rid of camera, only for debugging
-  private camera:Camera;
+  private camera: Camera;
 
   // worldgen function
   private readonly worldup: vec3;
@@ -203,7 +203,7 @@ class World {
     Math.floor(cameraLoc[2] / CHUNK_Z_SIZE),
   ] as vec3;
 
-  constructor(seed: number, cameraLoc: vec3, worldup: vec3, gl: WebGL2RenderingContext, blockManager: BlockManager, camera:Camera) {
+  constructor(seed: number, cameraLoc: vec3, worldup: vec3, gl: WebGL2RenderingContext, blockManager: BlockManager, camera: Camera) {
     this.gl = gl;
     this.blockManager = blockManager;
     this.seed = seed;
@@ -374,21 +374,55 @@ class World {
     }
   }
 
+  private createLightMatrix = (face: BlockFace): mat4 => {
+    // actual location of the light is in the center of the block
+    const lightLoc = vec3_add(face.cubeLoc, [0.5, 0.5, 0.5]);
+    // note that the near plane starts slightly after the face
+    // the far plane is less than the chunk size
+    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.5, 10.0);
+
+    const up: vec3 = face.face === Face.UP || face.face === Face.DOWN
+      ? [-1, 0, 0]
+      : [0, -1, 0];
+
+    const viewMat = mat4_look_at(lightLoc, vec3_add(lightLoc, getNormal(face.face)), up);
+    // compute final matrix
+    return mat4_mul(projectionMat, viewMat);
+  }
+
   // we use a 3d texture to store all of the textures in a cube
   private createLightTex = (): WebGLTexture => {
     const depthTexture = this.gl.createTexture()!;
     this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, depthTexture);
-    this.gl.texImage3D(
-      this.gl.TEXTURE_2D_ARRAY,      // target
-      0,                    // mip level
-      this.gl.RGBA, //this.gl.DEPTH_COMPONENT32F, // internal format
-      this.SHADOWMAP_SIZE ,   // width
-      this.SHADOWMAP_SIZE ,   // height
-      N_LIGHTS,           // depth
-      0,                  // border
-      this.gl.RGBA,// this.gl.DEPTH_COMPONENT, // format
-      this.gl.UNSIGNED_BYTE, //this.gl.FLOAT,           // type
-      null);              // data
+    if (this.color) {
+      const data = new Uint8Array(this.SHADOWMAP_SIZE * this.SHADOWMAP_SIZE * N_LIGHTS*4);
+      this.gl.texImage3D(
+        this.gl.TEXTURE_2D_ARRAY,      // target
+        0,                    // mip level
+        this.gl.RGBA, // internal format
+        this.SHADOWMAP_SIZE,   // width
+        this.SHADOWMAP_SIZE,   // height
+        N_LIGHTS,           // depth
+        0,                  // border
+        this.gl.RGBA, // format
+        this.gl.UNSIGNED_BYTE,           // type
+        data,              // data
+      );
+    } else {
+      const data = new Float32Array(this.SHADOWMAP_SIZE * this.SHADOWMAP_SIZE * N_LIGHTS);
+      this.gl.texImage3D(
+        this.gl.TEXTURE_2D_ARRAY,      // target
+        0,                    // mip level
+        this.gl.DEPTH_COMPONENT32F, // internal format
+        this.SHADOWMAP_SIZE,   // width
+        this.SHADOWMAP_SIZE,   // height
+        N_LIGHTS,           // depth
+        0,                  // border
+        this.gl.DEPTH_COMPONENT, // format
+        this.gl.FLOAT,           // type
+        data,              // data
+      );
+    }
     this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
     this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
     this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
@@ -397,21 +431,7 @@ class World {
     return depthTexture;
   }
 
-  private createLightMatrix = (face: BlockFace): mat4 => {
-    // actual location of the light is in the center of the block
-    const lightLoc = vec3_add(face.cubeLoc, [0.5, 0.5, 0.5]);
-    // note that the near plane starts slightly after the face
-    // the far plane is less than the chunk size
-    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.1, 1000.0);
-
-    const up:vec3 = face.face === Face.UP || face.face === Face.DOWN
-      ? [-1, 0, 0]
-      : [0, -1, 0];
-
-    const viewMat = mat4_look_at(lightLoc, vec3_add(lightLoc, getNormal(face.face)), up);
-    // compute final matrix
-    return mat4_mul(projectionMat, viewMat);
-  }
+  color = false;
 
   private renderShadowMap = (tex: WebGLTexture, i: number, mvpMat: mat4, solid: Graphics) => {
     this.gl.useProgram(this.shadowProgram);
@@ -431,13 +451,23 @@ class World {
     // create framebuffer to use
     const depthFramebuffer = this.gl.createFramebuffer()!;
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
-    this.gl.framebufferTextureLayer(
-      this.gl.FRAMEBUFFER,       // target
-      this.gl.COLOR_ATTACHMENT0, //this.gl.DEPTH_ATTACHMENT,  // attachment point
-      tex,                       // texture
-      0,                         // mip level
-      i,                         // layer
-    );
+    if (this.color) {
+      this.gl.framebufferTextureLayer(
+        this.gl.FRAMEBUFFER,       // target
+        this.gl.COLOR_ATTACHMENT0,  // attachment point
+        tex,                       // texture
+        0,                         // mip level
+        i,                         // layer
+      );
+    } else {
+      this.gl.framebufferTextureLayer(
+        this.gl.FRAMEBUFFER,       // target
+        this.gl.DEPTH_ATTACHMENT,  // attachment point
+        tex,                       // texture
+        0,                         // mip level
+        i,                         // layer
+      );
+    }
 
     // actually draw
     this.gl.bindVertexArray(solid.vao);
