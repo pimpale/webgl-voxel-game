@@ -41,7 +41,7 @@ class Game {
 
     this.gl = canvas.getContext('webgl2')!
 
-    this.world = new World(0, this.camera.getPos(), worldup, this.gl, blockManager);
+    this.world = new World(46, this.camera.getPos(), worldup, this.gl, blockManager, this.camera);
 
     // construct player
     const playerPhysics = new PhysicsComponent(this.world);
@@ -74,7 +74,6 @@ class Game {
   resizeCanvas = () => {
     this.canvas.width = window.innerWidth;
     this.canvas.height = window.innerHeight;
-    this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
   }
 
   displayHelp = () => this.animationLoop();

@@ -26,6 +26,10 @@ export class Camera {
   private readonly worldup:vec3;
   private pos: vec3;
   private dir: vec3;
+
+  foo = 100;
+  mvp?:mat4;
+
   private readonly canvas: HTMLCanvasElement;
 
   constructor(loc: vec3, dir: vec3, canvas: HTMLCanvasElement, worldup:vec3) {
@@ -42,6 +46,10 @@ export class Camera {
   setDir = (dir: vec3) => this.dir = vec3_dup(dir);
 
   getMvp = () => {
+      if(this.mvp && this.foo > 0) {
+          this.foo--;
+          return this.mvp;
+      }
     const fov = RADIANS(90.0);
     const aspect_ratio = this.canvas.width / this.canvas.height;
     const projection = mat4_perspective(fov, aspect_ratio, 0.001, 1000.0);

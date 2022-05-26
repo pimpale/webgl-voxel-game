@@ -179,6 +179,23 @@ export class PlayerControlComponent extends Component {
         }
       }
 
+      if (this.keys.has('Digit1')) {
+        this.blockInteraction.placeID = 1;
+      }
+      if (this.keys.has('Digit2')) {
+        this.blockInteraction.placeID = 2;
+      }
+      if (this.keys.has('Digit3')) {
+        this.blockInteraction.placeID = 3;
+      }
+      if (this.keys.has('Digit4')) {
+        this.blockInteraction.placeID = 4;
+      }
+      if (this.keys.has('Digit5')) {
+        this.blockInteraction.placeID = 5;
+      }
+
+
       // break/place block
       if (this.leftMouseDown) {
         this.blockInteraction.breakSelectedBlock();
@@ -245,6 +262,8 @@ export class BlockInteractionComponent extends Component {
   private camera: Camera;
   private world: World;
 
+  placeID = 2;
+
   private ray: Highlight | null = null;
 
   private breakRequests = new Map<string, number>();
@@ -289,7 +308,7 @@ export class BlockInteractionComponent extends Component {
     }
     for (const [loc, count] of this.placeRequests) {
       if (count > 50) {
-        this.world.setBlock(JSON.parse(loc), 5);
+        this.world.setBlock(JSON.parse(loc), this.placeID);
         this.placeRequests.delete(loc);
       }
     }
