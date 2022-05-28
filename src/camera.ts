@@ -27,9 +27,6 @@ export class Camera {
   private pos: vec3;
   private dir: vec3;
 
-  foo = 100;
-  mvp?:mat4;
-
   private readonly canvas: HTMLCanvasElement;
 
   constructor(loc: vec3, dir: vec3, canvas: HTMLCanvasElement, worldup:vec3) {
@@ -46,13 +43,9 @@ export class Camera {
   setDir = (dir: vec3) => this.dir = vec3_dup(dir);
 
   getMvp = () => {
-      if(this.mvp && this.foo > 0) {
-          this.foo--;
-          return this.mvp;
-      }
     const fov = RADIANS(90.0);
     const aspect_ratio = this.canvas.width / this.canvas.height;
-    const projection = mat4_perspective(fov, aspect_ratio, 0.1, 30.0);
+    const projection = mat4_perspective(fov, aspect_ratio, 0.1, 100.0);
 
     // calculate the view matrix using our camera basis
     const view = mat4_look_at(this.pos, vec3_add(this.pos, this.dir), this.worldup);

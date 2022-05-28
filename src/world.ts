@@ -78,6 +78,8 @@ uniform sampler2DArray u_textureAtlas;
 
 uniform int u_lightNumber;
 
+uniform float u_lightNumber;
+
 // the light depth maps
 uniform sampler2DArray u_lightDepthArr;
 
@@ -92,9 +94,7 @@ out vec4 v_outColor;
 void main() {
   vec4 color = texture(u_textureAtlas, v_tuv);
 
-  float lightSum = 0.6;
-
-  v_outColor = vec4(color.rgb*color.a*lightSum, color.a);
+  float lightSum = 0.2;
 
   for(int i = 0; i < u_lightNumber; i++) {
     vec3 projectedCoord = v_lightspaceCoords[i].xyz / v_lightspaceCoords[i].w;
@@ -106,20 +106,18 @@ void main() {
         projectedCoord.y >= -1.0 &&
         projectedCoord.y <= 1.0;
 
-    // subtract bias
-    float currentDepth = projectedCoord.z - 0.05;
-
     // remap coords to texCoords
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
-    // the 'r' channel has the depth values
-    float projectedDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    float shadowLight = (inRange && projectedDepth <= currentDepth) ? 0.0 : 0.3;
-    lightSum += shadowLight;
-    if(inRange) {
-      v_outColor = texture(u_lightDepthArr, vec3(texCoord, i));
+    float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
+    float currentDepth = projectedCoord.z - 0.1;
+
+    if(inRange && depthMapDepth > currentDepth) {
+      //v_outColor = texture(u_lightDepthArr, vec3(texCoord, i));
+      lightSum += (1.0-depthMapDepth);
     }
   }
+  v_outColor = vec4(color.rgb*color.a*lightSum, color.a);
 }
 `;
 
@@ -147,39 +145,6 @@ uniform sampler2DArray u_textureAtlas;
 
 void main() {
   v_outColor = vec4(texture(u_textureAtlas, v_tuv).xyz, 1.0);
-}
-`;
-
-// used to render a quad onto the screen
-const quad_vs = `#version 300 es
-in vec2 a_position;
-out vec2 v_texCoord;
-
-void main() {
-  v_texCoord = a_position;
-
-  // convert from 0->1 to 0->2
-  // convert from 0->2 to -1->+1 (clip space)
-  vec2 clipSpace = (a_position * 2.0) - 1.0;
-
-  gl_Position = vec4(clipSpace, 0, 1);
-}
-`
-
-// used to render a quad onto the screen
-const quad_fs = `#version 300 es
-precision highp float;
-precision highp sampler2DArray;
-in vec2 v_texCoord;
-
-uniform sampler2DArray u_tex;
-
-out vec4 v_outColor;
-
-void main() {
-    vec4 val = texture(u_tex, vec3(v_texCoord, 0.0));
-    float yeet  = val.r;
-    v_outColor = vec4(yeet, yeet, yeet, 1.0);
 }
 `;
 
@@ -228,11 +193,6 @@ class World {
 
   private gl: WebGL2RenderingContext;
   private blockManager: BlockManager
-
-  private quadProgram: WebGLProgram;
-  private quadVao: WebGLVertexArrayObject;
-  private oofTex: WebGLTexture;
-  private oofFb: WebGLFramebuffer;
 
   getWorldChunkLoc = (cameraLoc: vec3) => [
     Math.floor(cameraLoc[0] / CHUNK_X_SIZE),
@@ -301,70 +261,6 @@ class World {
     // Tell the shader to get the textureAtlas texture from texture unit 0
     this.shadowTextureAtlasLoc = this.gl.getUniformLocation(this.shadowProgram, "u_textureAtlas")!;
     this.gl.uniform1i(this.shadowTextureAtlasLoc, 0);
-
-
-    /// QUAD PROGRAM
-    {
-
-      this.quadProgram = createProgram(
-        this.gl,
-        [
-          createShader(this.gl, this.gl.VERTEX_SHADER, quad_vs),
-          createShader(this.gl, this.gl.FRAGMENT_SHADER, quad_fs),
-        ],
-        new Map([
-          [this.POSITION_LOC, 'a_position'],
-        ])
-      )!;
-      this.gl.useProgram(this.quadProgram);
-
-      // bind uniform tex to quad 0
-      const quadTexLoc = this.gl.getUniformLocation(this.quadProgram, 'u_tex');
-      this.gl.uniform1i(quadTexLoc, 0);
-
-      this.quadVao = this.gl.createVertexArray()!;
-      this.gl.bindVertexArray(this.quadVao);
-
-      const buffer = this.gl.createBuffer()!;
-      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
-      this.gl.bufferData(
-        this.gl.ARRAY_BUFFER,
-        new Float32Array([
-          0, 0,
-          1, 0,
-          0, 1,
-          0, 1,
-          1, 0,
-          1, 1,
-        ]),
-        this.gl.STATIC_DRAW
-      );
-
-      // setup our attributes to tell WebGL how to pull
-      // the data from the buffer above to the position attribute
-      this.gl.enableVertexAttribArray(this.POSITION_LOC);
-      this.gl.vertexAttribPointer(
-        this.POSITION_LOC,
-        2,         // size (num components)
-        this.gl.FLOAT,  // type of data in buffer
-        false,     // normalize
-        0,         // stride (0 = auto)
-        0,         // offset
-      );
-
-      this.oofTex = this.createLightTex();
-
-      this.oofFb = this.gl.createFramebuffer()!;
-      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.oofFb);
-      this.gl.framebufferTextureLayer(
-        this.gl.FRAMEBUFFER,       // target
-        this.gl.DEPTH_ATTACHMENT,  // attachment point
-        this.oofTex,               // texture
-        0,                         // mip level
-        0,                         // layer
-      );
-
-    }
 
     this.updateCameraLoc();
   }
@@ -480,7 +376,7 @@ class World {
     const lightLoc = vec3_add(face.cubeLoc, [0.5, 0.5, 0.5]);
     // note that the near plane starts slightly after the face
     // the far plane is less than the chunk size
-    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.5, 5.0);
+    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.49, 10.0);
 
     const up: vec3 = face.face === Face.UP || face.face === Face.DOWN
       ? [-1, 0, 0]
@@ -525,9 +421,6 @@ class World {
     // bind mvpMat matrix
     this.gl.uniformMatrix4fv(this.shadowMvpMatLoc, false, mat4_to_uniform(mvpMat));
 
-    this.camera.foo = 100;
-    this.camera.mvp = mvpMat;
-
     const depthFramebuffer = this.gl.createFramebuffer()!;
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
     this.gl.framebufferTextureLayer(
@@ -540,7 +433,6 @@ class World {
 
     // set settings
     this.gl.viewport(0, 0, this.SHADOWMAP_SIZE, this.SHADOWMAP_SIZE);
-
     this.gl.enable(this.gl.DEPTH_TEST); // enable depth tests
     this.gl.enable(this.gl.CULL_FACE) // remove reversed faces
     this.gl.enable(this.gl.BLEND) // enable blending
@@ -552,7 +444,7 @@ class World {
     // actually draw
     this.gl.bindVertexArray(solid.vao);
     this.gl.drawArrays(this.gl.TRIANGLES, 0, solid.vertexCount);
-    
+
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
 
     // delete framebuffer
@@ -724,13 +616,13 @@ class World {
     }
   }
 
-  s = false;
-  q = 200;
-
   render = (mvpMat: mat4) => {
-    //this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
     // use render program
     this.gl.useProgram(this.renderProgram);
+
+    // render to canvas
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+    this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
 
     // bind matrix
     this.gl.uniformMatrix4fv(this.renderMvpMatLoc, false, mat4_to_uniform(mvpMat));
@@ -740,15 +632,8 @@ class World {
     this.gl.enable(this.gl.BLEND) // enable blending
     this.gl.blendFunc(this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA) // blend by adding together alpha
 
-    // bind ooffb
-    this.gl.viewport(0, 0, this.SHADOWMAP_SIZE, this.SHADOWMAP_SIZE);
-    if (this.s) {
-      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.oofFb);
-      this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
-    } else {
-      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
-    }
-
+    this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
     for (const chunk of this.chunk_map.values()) {
       if (chunk.graphics !== undefined && chunk.lights !== undefined) {
@@ -777,22 +662,6 @@ class World {
 
         this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.solid.vertexCount);
       }
-    }
-
-    // render tex
-    if (this.s) {
-      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
-      this.gl.useProgram(this.quadProgram);
-      this.gl.bindVertexArray(this.quadVao);
-      // bind the texture 0 to render atlas
-      this.gl.activeTexture(this.gl.TEXTURE0);
-      this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.oofTex);
-      this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
-    }
-    this.q--;
-    if (this.q <= 0) {
-      this.q = 200;
-      this.s = !this.s;
     }
 
     /*
