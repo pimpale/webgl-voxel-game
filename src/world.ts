@@ -31,7 +31,7 @@ type Chunk = {
   blocks?: Uint16Array,
   mesh?: { stale: boolean, solid: BlockFace[], transparent: BlockFace[], lights: BlockFace[] }
   graphics?: { stale: boolean, solid: Graphics, transparent: Graphics }
-  lights?: { stale: boolean, tex: WebGLTexture, fbs: WebGLFramebuffer[], matrixes: mat4[] }
+  lights?: { stale: boolean, tex: WebGLTexture, fbs: WebGLFramebuffer[], pos: vec3[], matrixes: mat4[] }
 }
 
 const N_LIGHTS = 16;
@@ -46,12 +46,16 @@ uniform mat4 u_mvpMat;
 in vec3 a_tuv;
 out vec3 v_tuv;
 
+in vec3 a_normal;
+out vec3 v_normal;
+
 uniform int u_lightNumber;
 uniform vec4 u_lightMvpArr[${N_LIGHTS}*4];
 out vec4 v_lightspaceCoords[${N_LIGHTS}];
 
 void main() {
    v_tuv = a_tuv;
+   v_normal = a_normal;
    // actual location
    gl_Position = u_mvpMat * vec4(a_position, 1.0);
 
@@ -83,8 +87,16 @@ uniform float u_bias;
 // the light depth maps
 uniform sampler2DArray u_lightDepthArr;
 
+// light position
+uniform vec3 v_lightPosArr[${N_LIGHTS}];
+
 // positions according to lights
 in vec4 v_lightspaceCoords[${N_LIGHTS}];
+
+
+
+// normal
+in vec3 v_normal;
 
 // texCoord
 in vec3 v_tuv;
@@ -113,7 +125,7 @@ void main() {
     float currentDepth = projectedCoord.z + u_bias;
 
     if(inRange && depthMapDepth > currentDepth) {
-        lightSum += 1.0*(depthMapDepth - currentDepth);
+        lightSum += 1.0;
     }
   }
   v_outColor = vec4(color.rgb*lightSum, color.a);
@@ -122,12 +134,9 @@ void main() {
 
 const shadow_vs = `#version 300 es
 precision highp float;
-in vec3 a_tuv;
 in vec3 a_position;
 uniform mat4 u_mvpMat;
-out vec3 v_tuv;
 void main() {
-   v_tuv = a_tuv;
    gl_Position = u_mvpMat * vec4(a_position, 1.0) ;
 }
 `;
@@ -139,11 +148,8 @@ precision highp sampler2DArray;
 in vec3 v_tuv;
 out vec4 v_outColor;
 
-// the texture atlas for the blocks
-uniform sampler2DArray u_textureAtlas;
-
 void main() {
-  v_outColor = vec4(texture(u_textureAtlas, v_tuv).xyz, 1.0);
+  v_outColor = vec4(0.0, 0.0, 0.0, 1.0);
 }
 `;
 
@@ -154,7 +160,8 @@ export type Highlight = {
 
 class World {
   private readonly POSITION_LOC = 0;
-  private readonly TUV_LOC = 1;
+  private readonly NORMAL_LOC= 1;
+  private readonly TUV_LOC = 2;
 
   private readonly SHADOWMAP_SIZE = 128;
 
@@ -166,12 +173,12 @@ class World {
   private renderLightDepthArr: WebGLUniformLocation;
   private renderLightNumber: WebGLUniformLocation;
   private renderBiasLoc: WebGLUniformLocation;
+  private renderLightPosArr:WebGLUniformLocation;
   // pass a bunch of mat4s in column major order
   private renderLightMvpArr: WebGLUniformLocation;
 
   private shadowProgram: WebGLProgram;
   private shadowMvpMatLoc: WebGLUniformLocation;
-  private shadowTextureAtlasLoc: WebGLUniformLocation;
 
   readonly emptyChunk = new Uint16Array(CHUNK_X_SIZE * CHUNK_Y_SIZE * CHUNK_Z_SIZE);
 
@@ -220,6 +227,7 @@ class World {
       ],
       new Map([
         [this.POSITION_LOC, 'a_position'],
+        [this.NORMAL_LOC, 'a_normal'],
         [this.TUV_LOC, 'a_tuv'],
       ])
     )!;
@@ -233,6 +241,7 @@ class World {
     this.renderLightNumber = this.gl.getUniformLocation(this.renderProgram, "u_lightNumber")!;
     this.renderLightDepthArr = this.gl.getUniformLocation(this.renderProgram, "u_lightDepthArr")!;
     this.renderLightMvpArr = this.gl.getUniformLocation(this.renderProgram, "u_lightMvpArr")!;
+    this.renderLightPosArr = this.gl.getUniformLocation(this.renderProgram, "v_lightPosArr")!;
     this.renderBiasLoc = this.gl.getUniformLocation(this.renderProgram, "u_bias")!;
 
 
@@ -254,14 +263,10 @@ class World {
       ],
       new Map([
         [this.POSITION_LOC, 'a_position'],
-        [this.TUV_LOC, 'a_tuv'],
       ])
     )!;
     this.gl.useProgram(this.shadowProgram);
     this.shadowMvpMatLoc = this.gl.getUniformLocation(this.shadowProgram, "u_mvpMat")!;
-    // Tell the shader to get the textureAtlas texture from texture unit 0
-    this.shadowTextureAtlasLoc = this.gl.getUniformLocation(this.shadowProgram, "u_textureAtlas")!;
-    this.gl.uniform1i(this.shadowTextureAtlasLoc, 0);
 
     this.updateCameraLoc();
   }
@@ -282,8 +287,17 @@ class World {
       3,              // size (num components)
       this.gl.FLOAT,  // type of data in buffer
       false,          // normalize
-      6 * 4,          // stride (0 = auto)
+      9 * 4,          // stride (0 = auto)
       0 * 4,          // offset
+    );
+    this.gl.enableVertexAttribArray(this.NORMAL_LOC);
+    this.gl.vertexAttribPointer(
+      this.NORMAL_LOC,
+      3,              // size (num components)
+      this.gl.FLOAT,  // type of data in buffer
+      false,          // normalize
+      9 * 4,          // stride (0 = auto)
+      3 * 4,          // offset
     );
     this.gl.enableVertexAttribArray(this.TUV_LOC);
     this.gl.vertexAttribPointer(
@@ -291,8 +305,8 @@ class World {
       3,              // size (num components)
       this.gl.FLOAT,  // type of data in buffer
       false,          // normalize
-      6 * 4,          // stride (0 = auto)
-      3 * 4,          // offset
+      9 * 4,          // stride (0 = auto)
+      6 * 4,          // offset
     );
 
     return {
@@ -434,10 +448,6 @@ class World {
     solids: Graphics[]
   ) => {
     this.gl.useProgram(this.shadowProgram);
-
-    // bind the texture 0 to render atlas
-    this.gl.activeTexture(this.gl.TEXTURE0);
-    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.textureAtlas);
 
     // bind mvpMat matrix
     this.gl.uniformMatrix4fv(this.shadowMvpMatLoc, false, mat4_to_uniform(mvpMat));
@@ -1057,7 +1067,7 @@ function createMesh(
 }
 
 function writeMesh(faces: BlockFace[]): Float32Array {
-  const data = new Float32Array(faces.length * 6 * 6);
+  const data = new Float32Array(faces.length * 6 * 9);
 
   let i = 0;
   for (const { bi, face, cubeLoc: [fx, fy, fz] } of faces) {
@@ -1074,59 +1084,61 @@ function writeMesh(faces: BlockFace[]): Float32Array {
     // the texture id to use
     const v = bi * 6 + face;
 
+    const normal = getNormal(face);
+
     switch (face) {
       case Face.LEFT: {
-        data.set(v000, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v001, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v010, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v001, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v011, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v010, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v000, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
         break;
       }
       case Face.RIGHT: {
-        data.set(v100, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v111, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v111, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
         break;
       }
       case Face.UP: {
-        data.set(v001, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v000, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v100, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v001, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v100, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v000, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
         break;
       }
       case Face.DOWN: {
-        data.set(v010, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v011, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v011, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v111, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v111, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
         break;
       }
       case Face.BACK: {
-        data.set(v000, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v010, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v100, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v100, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v010, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v000, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
         break;
       }
       case Face.FRONT: {
-        data.set(v011, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v001, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v011, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v111, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v111, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
         break;
       }
     }
