@@ -34,7 +34,7 @@ type Chunk = {
   lights?: { stale: boolean, tex: WebGLTexture, matrixes: mat4[] }
 }
 
-const N_LIGHTS = 1;
+const N_LIGHTS = 8;
 
 
 const vs = `#version 300 es
@@ -71,7 +71,6 @@ void main() {
 const fs = `#version 300 es
 precision highp int;
 precision highp float;
-precision highp sampler2D;
 precision highp sampler2DArray;
 
 // the texture atlas for the blocks
@@ -80,7 +79,7 @@ uniform sampler2DArray u_textureAtlas;
 uniform int u_lightNumber;
 
 // the light depth maps
-uniform sampler2D u_lightDepthArr;
+uniform sampler2DArray u_lightDepthArr;
 
 // positions according to lights
 in vec4 v_lightspaceCoords[${N_LIGHTS}];
@@ -114,11 +113,11 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     // the 'r' channel has the depth values
-    float projectedDepth = texture(u_lightDepthArr, texCoord).r;
+    float projectedDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
     float shadowLight = (inRange && projectedDepth <= currentDepth) ? 0.0 : 0.3;
     lightSum += shadowLight;
     if(inRange) {
-      v_outColor = texture(u_lightDepthArr, texCoord);
+      v_outColor = texture(u_lightDepthArr, vec3(texCoord, i));
     }
   }
 }
@@ -170,16 +169,17 @@ void main() {
 // used to render a quad onto the screen
 const quad_fs = `#version 300 es
 precision highp float;
-precision highp sampler2D;
+precision highp sampler2DArray;
 in vec2 v_texCoord;
 
-uniform sampler2D u_tex;
+uniform sampler2DArray u_tex;
 
 out vec4 v_outColor;
 
 void main() {
-    vec4 val = texture(u_tex, v_texCoord);
-    v_outColor = vec4(val.xyz, 1.0);
+    vec4 val = texture(u_tex, vec3(v_texCoord, 0.0));
+    float yeet  = val.r;
+    v_outColor = vec4(yeet, yeet, yeet, 1.0);
 }
 `;
 
@@ -352,32 +352,16 @@ class World {
         0,         // offset
       );
 
-      this.oofTex = this.gl.createTexture()!;
-      this.gl.bindTexture(this.gl.TEXTURE_2D, this.oofTex);
-      this.gl.texImage2D(
-        this.gl.TEXTURE_2D,      // target
-        0,                    // mip level
-        this.gl.DEPTH_COMPONENT16, // internal format
-        this.SHADOWMAP_SIZE,   // width
-        this.SHADOWMAP_SIZE,   // height
-        0,                  // border
-        this.gl.DEPTH_COMPONENT, // format
-        this.gl.UNSIGNED_SHORT,           // type
-        null,              // data
-      );
-      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
-      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
-      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
-      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+      this.oofTex = this.createLightTex();
 
       this.oofFb = this.gl.createFramebuffer()!;
       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.oofFb);
-      this.gl.framebufferTexture2D(
+      this.gl.framebufferTextureLayer(
         this.gl.FRAMEBUFFER,       // target
         this.gl.DEPTH_ATTACHMENT,  // attachment point
-        this.gl.TEXTURE_2D,      // texture target
-        this.oofTex,                       // texture
+        this.oofTex,               // texture
         0,                         // mip level
+        0,                         // layer
       );
 
     }
@@ -510,57 +494,66 @@ class World {
   // we use a 3d texture to store all of the textures in a cube
   private createLightTex = (): WebGLTexture => {
     const depthTexture = this.gl.createTexture()!;
-    this.gl.bindTexture(this.gl.TEXTURE_2D, depthTexture);
-    this.gl.texImage2D(
-      this.gl.TEXTURE_2D,      // target
+    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, depthTexture);
+    this.gl.texImage3D(
+      this.gl.TEXTURE_2D_ARRAY,      // target
       0,                    // mip level
       this.gl.DEPTH_COMPONENT32F, // internal format
       this.SHADOWMAP_SIZE,   // width
       this.SHADOWMAP_SIZE,   // height
+      N_LIGHTS,   // height
       0,                  // border
       this.gl.DEPTH_COMPONENT, // format
       this.gl.FLOAT,           // type
       null,              // data
     );
-    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
-    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
-    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
-    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
 
     return depthTexture;
   }
 
   private renderShadowMap = (tex: WebGLTexture, i: number, mvpMat: mat4, solid: Graphics) => {
     this.gl.useProgram(this.shadowProgram);
-    // bind matrix
+
+    // bind the texture 0 to render atlas
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.textureAtlas);
+
+    // bind mvpMat matrix
     this.gl.uniformMatrix4fv(this.shadowMvpMatLoc, false, mat4_to_uniform(mvpMat));
 
     this.camera.foo = 100;
     this.camera.mvp = mvpMat;
 
-    // create framebuffer to use
     const depthFramebuffer = this.gl.createFramebuffer()!;
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
-    this.gl.framebufferTexture2D(
+    this.gl.framebufferTextureLayer(
       this.gl.FRAMEBUFFER,       // target
       this.gl.DEPTH_ATTACHMENT,  // attachment point
-      this.gl.TEXTURE_2D,      // texture target
-      tex,                       // texture
+      tex,               // texture
       0,                         // mip level
+      i,                         // layer
     );
 
     // set settings
-    // this.gl.viewport(0, 0, this.SHADOWMAP_SIZE, this.SHADOWMAP_SIZE);
-    // this.gl.enable(this.gl.DEPTH_TEST);
-    // this.gl.enable(this.gl.CULL_FACE)
-    // this.gl.enable(this.gl.BLEND)
-    // this.gl.depthMask(false);
-    // this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
+    this.gl.viewport(0, 0, this.SHADOWMAP_SIZE, this.SHADOWMAP_SIZE);
 
+    this.gl.enable(this.gl.DEPTH_TEST); // enable depth tests
+    this.gl.enable(this.gl.CULL_FACE) // remove reversed faces
+    this.gl.enable(this.gl.BLEND) // enable blending
+    this.gl.blendFunc(this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA) // blend by adding together alpha
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
+    this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
 
     // actually draw
     this.gl.bindVertexArray(solid.vao);
     this.gl.drawArrays(this.gl.TRIANGLES, 0, solid.vertexCount);
+    
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
 
     // delete framebuffer
     //this.gl.deleteFramebuffer(depthFramebuffer);
@@ -731,8 +724,8 @@ class World {
     }
   }
 
-  s = true;
-  q = 1000;
+  s = false;
+  q = 200;
 
   render = (mvpMat: mat4) => {
     //this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
@@ -742,30 +735,19 @@ class World {
     // bind matrix
     this.gl.uniformMatrix4fv(this.renderMvpMatLoc, false, mat4_to_uniform(mvpMat));
 
-    // enable depth tests
-    this.gl.enable(this.gl.DEPTH_TEST);
-    if(this.s) {
-       this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
-    }
-
-    // remove reversed faces
-    //this.gl.enable(this.gl.CULL_FACE)
-
-    // enable blending
-    //this.gl.blendFunc(this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA)
-    //this.gl.enable(this.gl.BLEND)
-
-    // draw solid
-    this.gl.depthMask(true);
+    this.gl.enable(this.gl.DEPTH_TEST); // enable depth tests
+    this.gl.enable(this.gl.CULL_FACE) // remove reversed faces
+    this.gl.enable(this.gl.BLEND) // enable blending
+    this.gl.blendFunc(this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA) // blend by adding together alpha
 
     // bind ooffb
     this.gl.viewport(0, 0, this.SHADOWMAP_SIZE, this.SHADOWMAP_SIZE);
-    if(this.s) {
-       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.oofFb);
+    if (this.s) {
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.oofFb);
+      this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
     } else {
-       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
     }
-
 
 
     for (const chunk of this.chunk_map.values()) {
@@ -779,7 +761,7 @@ class World {
 
         // bind this chunk's lights to tex 1
         this.gl.activeTexture(this.gl.TEXTURE1);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, chunk.lights.tex);
+        this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, chunk.lights.tex);
 
         // set n lights correctly
         this.gl.uniform1i(this.renderLightNumber, chunk.lights.matrixes.length);
@@ -798,19 +780,19 @@ class World {
     }
 
     // render tex
-    if(this.s) {
+    if (this.s) {
       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
       this.gl.useProgram(this.quadProgram);
       this.gl.bindVertexArray(this.quadVao);
       // bind the texture 0 to render atlas
       this.gl.activeTexture(this.gl.TEXTURE0);
-      this.gl.bindTexture(this.gl.TEXTURE_2D, this.oofTex);
+      this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.oofTex);
       this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
     }
     this.q--;
-    if(this.q <= 0) {
-        this.q = 1000;
-        this.s = !this.s;
+    if (this.q <= 0) {
+      this.q = 200;
+      this.s = !this.s;
     }
 
     /*

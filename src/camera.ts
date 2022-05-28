@@ -52,7 +52,7 @@ export class Camera {
       }
     const fov = RADIANS(90.0);
     const aspect_ratio = this.canvas.width / this.canvas.height;
-    const projection = mat4_perspective(fov, aspect_ratio, 0.001, 1000.0);
+    const projection = mat4_perspective(fov, aspect_ratio, 0.1, 30.0);
 
     // calculate the view matrix using our camera basis
     const view = mat4_look_at(this.pos, vec3_add(this.pos, this.dir), this.worldup);
