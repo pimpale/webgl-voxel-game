@@ -31,10 +31,10 @@ type Chunk = {
   blocks?: Uint16Array,
   mesh?: { stale: boolean, solid: BlockFace[], transparent: BlockFace[], lights: BlockFace[] }
   graphics?: { stale: boolean, solid: Graphics, transparent: Graphics }
-  lights?: { stale: boolean, tex: WebGLTexture, matrixes: mat4[] }
+  lights?: { stale: boolean, tex: WebGLTexture, fbs: WebGLFramebuffer[], matrixes: mat4[] }
 }
 
-const N_LIGHTS = 8;
+const N_LIGHTS = 16;
 
 
 const vs = `#version 300 es
@@ -78,7 +78,7 @@ uniform sampler2DArray u_textureAtlas;
 
 uniform int u_lightNumber;
 
-uniform float u_lightNumber;
+uniform float u_bias;
 
 // the light depth maps
 uniform sampler2DArray u_lightDepthArr;
@@ -110,14 +110,13 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    float currentDepth = projectedCoord.z - 0.1;
+    float currentDepth = projectedCoord.z + u_bias;
 
     if(inRange && depthMapDepth > currentDepth) {
-      //v_outColor = texture(u_lightDepthArr, vec3(texCoord, i));
-      lightSum += (1.0-depthMapDepth);
+        lightSum += 1.0*(depthMapDepth - currentDepth);
     }
   }
-  v_outColor = vec4(color.rgb*color.a*lightSum, color.a);
+  v_outColor = vec4(color.rgb*lightSum, color.a);
 }
 `;
 
@@ -157,7 +156,7 @@ class World {
   private readonly POSITION_LOC = 0;
   private readonly TUV_LOC = 1;
 
-  private readonly SHADOWMAP_SIZE = 512;
+  private readonly SHADOWMAP_SIZE = 128;
 
   private textureAtlas: WebGLTexture;
 
@@ -166,6 +165,7 @@ class World {
   private renderTextureAtlasLoc: WebGLUniformLocation;
   private renderLightDepthArr: WebGLUniformLocation;
   private renderLightNumber: WebGLUniformLocation;
+  private renderBiasLoc: WebGLUniformLocation;
   // pass a bunch of mat4s in column major order
   private renderLightMvpArr: WebGLUniformLocation;
 
@@ -233,6 +233,7 @@ class World {
     this.renderLightNumber = this.gl.getUniformLocation(this.renderProgram, "u_lightNumber")!;
     this.renderLightDepthArr = this.gl.getUniformLocation(this.renderProgram, "u_lightDepthArr")!;
     this.renderLightMvpArr = this.gl.getUniformLocation(this.renderProgram, "u_lightMvpArr")!;
+    this.renderBiasLoc = this.gl.getUniformLocation(this.renderProgram, "u_bias")!;
 
 
     // set texture 0 as current
@@ -376,7 +377,7 @@ class World {
     const lightLoc = vec3_add(face.cubeLoc, [0.5, 0.5, 0.5]);
     // note that the near plane starts slightly after the face
     // the far plane is less than the chunk size
-    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.49, 10.0);
+    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.49, 10.49);
 
     const up: vec3 = face.face === Face.UP || face.face === Face.DOWN
       ? [-1, 0, 0]
@@ -388,7 +389,7 @@ class World {
   }
 
   // we use a 3d texture to store all of the textures in a cube
-  private createLightTex = (): WebGLTexture => {
+  private createLightData = (): { tex: WebGLTexture, fbs: WebGLFramebuffer[] } => {
     const depthTexture = this.gl.createTexture()!;
     this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, depthTexture);
     this.gl.texImage3D(
@@ -408,10 +409,30 @@ class World {
     this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
     this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
 
-    return depthTexture;
+    const fbs: WebGLFramebuffer[] = []
+
+    for (let i = 0; i < N_LIGHTS; i++) {
+      const depthFramebuffer = this.gl.createFramebuffer()!;
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
+      this.gl.framebufferTextureLayer(
+        this.gl.FRAMEBUFFER,       // target
+        this.gl.DEPTH_ATTACHMENT,  // attachment point
+        depthTexture,              // texture
+        0,                         // mip level
+        i,                         // layer
+      );
+      fbs.push(depthFramebuffer);
+    }
+
+    return { tex: depthTexture, fbs };
   }
 
-  private renderShadowMap = (tex: WebGLTexture, i: number, mvpMat: mat4, solid: Graphics) => {
+  private renderShadowMap = (
+    tex: WebGLTexture,
+    fb: WebGLFramebuffer,
+    mvpMat: mat4,
+    solids: Graphics[]
+  ) => {
     this.gl.useProgram(this.shadowProgram);
 
     // bind the texture 0 to render atlas
@@ -421,16 +442,6 @@ class World {
     // bind mvpMat matrix
     this.gl.uniformMatrix4fv(this.shadowMvpMatLoc, false, mat4_to_uniform(mvpMat));
 
-    const depthFramebuffer = this.gl.createFramebuffer()!;
-    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
-    this.gl.framebufferTextureLayer(
-      this.gl.FRAMEBUFFER,       // target
-      this.gl.DEPTH_ATTACHMENT,  // attachment point
-      tex,               // texture
-      0,                         // mip level
-      i,                         // layer
-    );
-
     // set settings
     this.gl.viewport(0, 0, this.SHADOWMAP_SIZE, this.SHADOWMAP_SIZE);
     this.gl.enable(this.gl.DEPTH_TEST); // enable depth tests
@@ -438,17 +449,14 @@ class World {
     this.gl.enable(this.gl.BLEND) // enable blending
     this.gl.blendFunc(this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA) // blend by adding together alpha
 
-    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fb);
     this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
 
     // actually draw
-    this.gl.bindVertexArray(solid.vao);
-    this.gl.drawArrays(this.gl.TRIANGLES, 0, solid.vertexCount);
-
-    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
-
-    // delete framebuffer
-    //this.gl.deleteFramebuffer(depthFramebuffer);
+    for (const solid of solids) {
+      this.gl.bindVertexArray(solid.vao);
+      this.gl.drawArrays(this.gl.TRIANGLES, 0, solid.vertexCount);
+    }
   }
 
   adjacentChunkLocs = (chunkLoc: vec3): vec3[] => {
@@ -579,19 +587,28 @@ class World {
           .slice(0, N_LIGHTS)
           .map(face => this.createLightMatrix(face));
         if (chunk.lights === undefined) {
+          const data = this.createLightData();
           chunk.lights = {
-            stale: true,
-            tex: this.createLightTex(),
+            tex: data.tex,
+            fbs: data.fbs,
             matrixes,
+            stale: true,
           }
         } else {
           chunk.lights.matrixes = matrixes;
         }
 
+        const solidsToRender = [chunk.graphics.solid];
+        for (const coord of this.neighboringChunkLocs(parsedCoord)) {
+          const chunk = this.chunk_map.get(JSON.stringify(coord));
+          if (chunk !== undefined && chunk.graphics !== undefined) {
+            solidsToRender.push(chunk.graphics.solid);
+          }
+        }
+
         // now iterate through our graphics map and render world
         for (let i = 0; i < chunk.lights.matrixes.length; i++) {
-          // TODO: render the 6 neighboring chunks around the block
-          this.renderShadowMap(chunk.lights.tex, i, chunk.lights.matrixes[i], chunk.graphics.solid);
+          this.renderShadowMap(chunk.lights.tex, chunk.lights.fbs[i], chunk.lights.matrixes[i], solidsToRender);
         }
 
         // mark not stale
@@ -635,6 +652,10 @@ class World {
     this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
+    const oof = 0.012//0.04 + 0.1*Math.cos(Date.now()/1000);
+    this.gl.uniform1f(this.renderBiasLoc, oof);
+    console.log(oof);
+
     for (const chunk of this.chunk_map.values()) {
       if (chunk.graphics !== undefined && chunk.lights !== undefined) {
         // bind this chunk's vertex array
@@ -664,7 +685,6 @@ class World {
       }
     }
 
-    /*
     // draw translucent
     this.gl.depthMask(false);
     for (const chunk of this.chunk_map.values()) {
@@ -673,13 +693,13 @@ class World {
         this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.transparent.vertexCount);
       }
     }
-    // draw highlights over everything else
+    this.gl.depthMask(true);
+
     this.gl.disable(this.gl.DEPTH_TEST);
     for (const highlight of this.highlights.values()) {
       this.gl.bindVertexArray(highlight.vao);
       this.gl.drawArrays(this.gl.TRIANGLES, 0, highlight.vertexCount);
     }
-    */
   }
 
   getBlock = (coords: vec3) => {
@@ -890,6 +910,9 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
       }
     }
   }
+
+  blocks[chunkDataIndex(16, 16, 16)] = 5;
+
   return blocks;
 }
 
