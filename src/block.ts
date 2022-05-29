@@ -55,12 +55,6 @@ export type BlockDef = {
   textures?: BlockTextures
 }
 
-// TODO: create a const here that a texture atlas using the defs
-// Each row represents a block. The first row will be ignored, since air is transparent
-// The second row should be grass, and the third row should be stone.
-// Each row of the texture atlas should have 6 images, making it 16*6 pixels wide
-
-
 export class BlockManager {
   readonly defs: BlockDef[];
   readonly tileSize: number;
@@ -68,7 +62,6 @@ export class BlockManager {
   constructor(tileSize: number, defs: BlockDef[]) {
     this.tileSize = tileSize;
     this.defs = defs;
-
     // validate tiles
     for (let block_index = 0; block_index < this.defs.length; block_index++) {
       const block = this.defs[block_index];

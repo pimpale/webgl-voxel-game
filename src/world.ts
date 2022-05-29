@@ -11,15 +11,15 @@ const CHUNK_MESH_COST = 1;
 const CHUNK_MKGRAPHICS_COST = 1;
 const CHUNK_RENDERLIGHT_COST = 1;
 
-const CHUNK_X_SIZE = 24;
-const CHUNK_Y_SIZE = 24;
-const CHUNK_Z_SIZE = 24;
+const CHUNK_X_SIZE = 16;
+const CHUNK_Y_SIZE = 16;
+const CHUNK_Z_SIZE = 16;
 
 
 // how many chunks to render
-const RENDER_RADIUS_X = 1;
-const RENDER_RADIUS_Y = 1;
-const RENDER_RADIUS_Z = 1;
+const RENDER_RADIUS_X = 2;
+const RENDER_RADIUS_Y = 2;
+const RENDER_RADIUS_Z = 2;
 
 type Graphics = {
   vao: WebGLVertexArrayObject;
@@ -34,14 +34,20 @@ type Chunk = {
   lights?: { stale: boolean, tex: WebGLTexture, fbs: WebGLFramebuffer[], pos: vec3[], matrixes: mat4[] }
 }
 
-const N_LIGHTS = 16;
+const SHADOWMAP_SIZE = 100;
+// max number of lights to render per chunk
+const LIGHTS_PER_CHUNK = 10;
+// there are 9 chunks surrounding us
+const N_LIGHTS = 9 * LIGHTS_PER_CHUNK;
 
 
 const vs = `#version 300 es
 precision highp int;
 precision highp float;
-in vec3 a_position;
 uniform mat4 u_mvpMat;
+
+in vec3 a_position;
+out vec3 v_position;
 
 in vec3 a_tuv;
 out vec3 v_tuv;
@@ -49,26 +55,12 @@ out vec3 v_tuv;
 in vec3 a_normal;
 out vec3 v_normal;
 
-uniform int u_lightNumber;
-uniform vec4 u_lightMvpArr[${N_LIGHTS}*4];
-out vec4 v_lightspaceCoords[${N_LIGHTS}];
-
 void main() {
    v_tuv = a_tuv;
    v_normal = a_normal;
+   v_position = a_position;
    // actual location
    gl_Position = u_mvpMat * vec4(a_position, 1.0);
-
-   // location as seen by each of these lights
-   for(int i = 0; i < u_lightNumber; i++) {
-     mat4 mvp = mat4(
-         u_lightMvpArr[i*4 + 0],
-         u_lightMvpArr[i*4 + 1],
-         u_lightMvpArr[i*4 + 2],
-         u_lightMvpArr[i*4 + 3]
-     );
-     v_lightspaceCoords[i] = mvp * vec4(a_position, 1.0);
-   }
 }
 `;
 
@@ -82,18 +74,17 @@ uniform sampler2DArray u_textureAtlas;
 
 uniform int u_lightNumber;
 
-uniform float u_bias;
-
 // the light depth maps
 uniform sampler2DArray u_lightDepthArr;
 
 // light position
 uniform vec3 v_lightPosArr[${N_LIGHTS}];
 
-// positions according to lights
-in vec4 v_lightspaceCoords[${N_LIGHTS}];
+// camera view matrices of each point
+uniform vec4 u_lightMvpArr[${N_LIGHTS}*4];
 
-
+// position
+in vec3 v_position;
 
 // normal
 in vec3 v_normal;
@@ -106,10 +97,18 @@ out vec4 v_outColor;
 void main() {
   vec4 color = texture(u_textureAtlas, v_tuv);
 
-  float lightSum = 0.2;
+  float lightSum = 0.0;
 
   for(int i = 0; i < u_lightNumber; i++) {
-    vec3 projectedCoord = v_lightspaceCoords[i].xyz / v_lightspaceCoords[i].w;
+    mat4 mvp = mat4(
+        u_lightMvpArr[i*4 + 0],
+        u_lightMvpArr[i*4 + 1],
+        u_lightMvpArr[i*4 + 2],
+        u_lightMvpArr[i*4 + 3]
+    );
+    vec4 lightSpacePosition = mvp * vec4(v_position, 1.0);
+
+    vec3 projectedCoord = lightSpacePosition.xyz / lightSpacePosition.w;
     bool inRange =
         projectedCoord.z >= -1.0 &&
         projectedCoord.z <= 1.0 &&
@@ -122,12 +121,17 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    float currentDepth = projectedCoord.z + u_bias;
+    float currentDepth = (projectedCoord.z + 1.0)/2.0 - 0.01;
 
-    if(inRange && depthMapDepth > currentDepth) {
-        lightSum += 1.0;
+    if(inRange && currentDepth <= depthMapDepth) {
+        float intensity = pow((1.0-currentDepth), 0.5);
+        vec3 lightDir = normalize(v_lightPosArr[i] - v_position);
+        float diffuseIntensity = max(dot(v_normal, lightDir), 0.0);
+        lightSum += 2.0*diffuseIntensity*intensity;
     }
   }
+  // global ambient light
+  lightSum = max(lightSum, 0.2);
   v_outColor = vec4(color.rgb*lightSum, color.a);
 }
 `;
@@ -137,7 +141,7 @@ precision highp float;
 in vec3 a_position;
 uniform mat4 u_mvpMat;
 void main() {
-   gl_Position = u_mvpMat * vec4(a_position, 1.0) ;
+   gl_Position = u_mvpMat * vec4(a_position, 1.0);
 }
 `;
 
@@ -160,10 +164,9 @@ export type Highlight = {
 
 class World {
   private readonly POSITION_LOC = 0;
-  private readonly NORMAL_LOC= 1;
+  private readonly NORMAL_LOC = 1;
   private readonly TUV_LOC = 2;
 
-  private readonly SHADOWMAP_SIZE = 128;
 
   private textureAtlas: WebGLTexture;
 
@@ -172,8 +175,7 @@ class World {
   private renderTextureAtlasLoc: WebGLUniformLocation;
   private renderLightDepthArr: WebGLUniformLocation;
   private renderLightNumber: WebGLUniformLocation;
-  private renderBiasLoc: WebGLUniformLocation;
-  private renderLightPosArr:WebGLUniformLocation;
+  private renderLightPosArr: WebGLUniformLocation;
   // pass a bunch of mat4s in column major order
   private renderLightMvpArr: WebGLUniformLocation;
 
@@ -183,9 +185,6 @@ class World {
   readonly emptyChunk = new Uint16Array(CHUNK_X_SIZE * CHUNK_Y_SIZE * CHUNK_Z_SIZE);
 
   private worldChunkCenterLoc: vec3;
-
-  // TODO: get rid of camera, only for debugging
-  private camera: Camera;
 
   // worldgen function
   private readonly worldup: vec3;
@@ -217,8 +216,6 @@ class World {
     this.chunk_map = new Map();
     this.highlights = new Map();
 
-    this.camera = camera;
-
     this.renderProgram = createProgram(
       this.gl,
       [
@@ -242,7 +239,6 @@ class World {
     this.renderLightDepthArr = this.gl.getUniformLocation(this.renderProgram, "u_lightDepthArr")!;
     this.renderLightMvpArr = this.gl.getUniformLocation(this.renderProgram, "u_lightMvpArr")!;
     this.renderLightPosArr = this.gl.getUniformLocation(this.renderProgram, "v_lightPosArr")!;
-    this.renderBiasLoc = this.gl.getUniformLocation(this.renderProgram, "u_bias")!;
 
 
     // set texture 0 as current
@@ -312,7 +308,7 @@ class World {
     return {
       vao,
       buffer,
-      vertexCount: data.length / 6,
+      vertexCount: data.length / 9,
     }
   }
 
@@ -391,7 +387,7 @@ class World {
     const lightLoc = vec3_add(face.cubeLoc, [0.5, 0.5, 0.5]);
     // note that the near plane starts slightly after the face
     // the far plane is less than the chunk size
-    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.49, 10.49);
+    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.5, 10);
 
     const up: vec3 = face.face === Face.UP || face.face === Face.DOWN
       ? [-1, 0, 0]
@@ -410,8 +406,8 @@ class World {
       this.gl.TEXTURE_2D_ARRAY,      // target
       0,                    // mip level
       this.gl.DEPTH_COMPONENT32F, // internal format
-      this.SHADOWMAP_SIZE,   // width
-      this.SHADOWMAP_SIZE,   // height
+      SHADOWMAP_SIZE,   // width
+      SHADOWMAP_SIZE,   // hdepthMapDepthight
       N_LIGHTS,   // height
       0,                  // border
       this.gl.DEPTH_COMPONENT, // format
@@ -453,7 +449,7 @@ class World {
     this.gl.uniformMatrix4fv(this.shadowMvpMatLoc, false, mat4_to_uniform(mvpMat));
 
     // set settings
-    this.gl.viewport(0, 0, this.SHADOWMAP_SIZE, this.SHADOWMAP_SIZE);
+    this.gl.viewport(0, 0, SHADOWMAP_SIZE, SHADOWMAP_SIZE);
     this.gl.enable(this.gl.DEPTH_TEST); // enable depth tests
     this.gl.enable(this.gl.CULL_FACE) // remove reversed faces
     this.gl.enable(this.gl.BLEND) // enable blending
@@ -567,11 +563,19 @@ class World {
           lights,
           stale: false
         }
+        // update our graphics
         if (chunk.graphics !== undefined) {
           chunk.graphics.stale = true;
         }
+        // lights for all surrounding chunks will need to rerender
         if (chunk.lights !== undefined) {
-          chunk.lights.stale = true
+          chunk.lights.stale = true;
+        }
+        for (const coord of this.neighboringChunkLocs(parsedCoord)) {
+          const chunk = this.chunk_map.get(JSON.stringify(coord));
+          if (chunk && chunk.lights) {
+            chunk.lights.stale = true;
+          }
         }
         current_cost += CHUNK_MESH_COST;
       }
@@ -593,27 +597,47 @@ class World {
       if (current_cost > 1) { break CHUNK_UPDATE_LOOP; }
 
       if (chunk.lights === undefined || chunk.lights.stale) {
-        let matrixes = chunk.mesh.lights
-          .slice(0, N_LIGHTS)
-          .map(face => this.createLightMatrix(face));
+        // all the chunks we'll use
+        const relevantChunks = [parsedCoord, ...this.neighboringChunkLocs(parsedCoord)];
+        // gather up to LIGHTS_PER_CHUNK lights from each chunk surrounding us
+        const lightsToRender = relevantChunks
+          .flatMap(coord => {
+            const chunk = this.chunk_map.get(JSON.stringify(coord));
+            if (chunk && chunk.mesh) {
+              return chunk.mesh.lights.slice(0, LIGHTS_PER_CHUNK);
+            } else {
+              return [];
+            }
+          })
+          .slice(0, N_LIGHTS);
+        // only want to render solid part of scene
+        const solidsToRender = relevantChunks.flatMap(coord => {
+          const chunk = this.chunk_map.get(JSON.stringify(coord));
+          if (chunk && chunk.graphics) {
+            return [chunk.graphics.solid]
+          } else {
+            return [];
+          }
+        });
+
+        // positions of each light
+        const pos = lightsToRender.map(face => vec3_add(face.cubeLoc, [0.5, 0.5, 0.5]));
+        // camera view matrix of each point
+        const matrixes = lightsToRender.map(face => this.createLightMatrix(face));
+
+        // update data
         if (chunk.lights === undefined) {
           const data = this.createLightData();
           chunk.lights = {
             tex: data.tex,
             fbs: data.fbs,
             matrixes,
+            pos,
             stale: true,
           }
         } else {
+          chunk.lights.pos = pos;
           chunk.lights.matrixes = matrixes;
-        }
-
-        const solidsToRender = [chunk.graphics.solid];
-        for (const coord of this.neighboringChunkLocs(parsedCoord)) {
-          const chunk = this.chunk_map.get(JSON.stringify(coord));
-          if (chunk !== undefined && chunk.graphics !== undefined) {
-            solidsToRender.push(chunk.graphics.solid);
-          }
         }
 
         // now iterate through our graphics map and render world
@@ -628,9 +652,6 @@ class World {
 
       if (current_cost > 1) { break CHUNK_UPDATE_LOOP; }
     }
-
-    // TODO: debugging only
-    return;
 
     const cameraChunkLoc = this.getWorldChunkLoc(cameraLoc);
     if (
@@ -662,10 +683,6 @@ class World {
     this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
-    const oof = 0.012//0.04 + 0.1*Math.cos(Date.now()/1000);
-    this.gl.uniform1f(this.renderBiasLoc, oof);
-    console.log(oof);
-
     for (const chunk of this.chunk_map.values()) {
       if (chunk.graphics !== undefined && chunk.lights !== undefined) {
         // bind this chunk's vertex array
@@ -682,13 +699,20 @@ class World {
         // set n lights correctly
         this.gl.uniform1i(this.renderLightNumber, chunk.lights.matrixes.length);
 
-        if (chunk.lights.matrixes.length > 0) {
+        if (chunk.lights.pos.length > 0) {
           // set shadow matrixes correctly
-          const data = new Float32Array(chunk.lights.matrixes.length * 16);
+          const mdata = new Float32Array(chunk.lights.matrixes.length * 16);
           for (let i = 0; i < chunk.lights.matrixes.length; i++) {
-            data.set(mat4_to_uniform(chunk.lights.matrixes[i]), i * 16);
+            mdata.set(mat4_to_uniform(chunk.lights.matrixes[i]), i * 16);
           }
-          this.gl.uniform4fv(this.renderLightMvpArr, data);
+          this.gl.uniform4fv(this.renderLightMvpArr, mdata);
+
+          // set positions correctly
+          const pdata = new Float32Array(chunk.lights.pos.length * 3);
+          for (let i = 0; i < chunk.lights.pos.length; i++) {
+            pdata.set(chunk.lights.pos[i], i * 3);
+          }
+          this.gl.uniform3fv(this.renderLightPosArr, pdata);
         }
 
         this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.solid.vertexCount);
@@ -726,6 +750,13 @@ class World {
   }
 
   setBlock = (coords: vec3, val: number) => {
+    const setMeshStaleIfExists = (chunkLoc: vec3) => {
+      const chunk = this.chunk_map.get(JSON.stringify(chunkCoord));
+      if (chunk && chunk.mesh) {
+        chunk.mesh.stale = true;
+      }
+    }
+
     const chunkCoord = this.getWorldChunkLoc(coords);
     const chunk = this.chunk_map.get(JSON.stringify(chunkCoord));
     if (chunk && chunk.blocks) {
@@ -736,16 +767,25 @@ class World {
 
       chunk.blocks[chunkDataIndex(x, y, z)] = val;
 
-      // means we need to recompute the mesh of this
-      if (chunk.mesh !== undefined) {
-        chunk.mesh.stale = true;
+      // means we need to recompute the mesh of this and neighboring chunks (if affected)
+      setMeshStaleIfExists(chunkCoord);
+      if (x === 0) {
+        setMeshStaleIfExists(vec3_add(chunkCoord, [-1, 0, 0]));
       }
-      // TODO: could be optimized, only mark when x y and z are bordering another chunk
-      for (const loc of this.neighboringChunkLocs(chunkCoord)) {
-        const chunk = this.chunk_map.get(JSON.stringify(loc));
-        if (chunk && chunk.mesh) {
-          chunk.mesh.stale = true
-        }
+      if (x === CHUNK_X_SIZE - 1) {
+        setMeshStaleIfExists(vec3_add(chunkCoord, [+1, 0, 0]));
+      }
+      if (y === 0) {
+        setMeshStaleIfExists(vec3_add(chunkCoord, [0, -1, 0]));
+      }
+      if (y === CHUNK_Y_SIZE - 1) {
+        setMeshStaleIfExists(vec3_add(chunkCoord, [0, +1, 0]));
+      }
+      if (z === 0) {
+        setMeshStaleIfExists(vec3_add(chunkCoord, [0, 0, -1]));
+      }
+      if (z === CHUNK_Z_SIZE - 1) {
+        setMeshStaleIfExists(vec3_add(chunkCoord, [0, 0, +1]));
       }
       return true;
     } else {
@@ -1084,61 +1124,67 @@ function writeMesh(faces: BlockFace[]): Float32Array {
     // the texture id to use
     const v = bi * 6 + face;
 
-    const normal = getNormal(face);
+
+    const nLeft: vec3 = [-1, 0, 0];
+    const nRight: vec3 = [+1, 0, 0];
+    const nUp: vec3 = [0, -1, 0];
+    const nDown: vec3 = [0, +1, 0];
+    const nBack: vec3 = [0, 0, -1];
+    const nFront: vec3 = [0, 0, +1];
 
     switch (face) {
       case Face.LEFT: {
-        data.set(v000, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v000, i); i += 3; data.set(nLeft, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(nLeft, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(nLeft, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(nLeft, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(nLeft, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(nLeft, i); i += 3; data.set([1, 1, v], i); i += 3;
         break;
       }
       case Face.RIGHT: {
-        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v111, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(nRight, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(nRight, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(nRight, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(nRight, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(nRight, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v111, i); i += 3; data.set(nRight, i); i += 3; data.set([1, 1, v], i); i += 3;
         break;
       }
       case Face.UP: {
-        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v000, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(nUp, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v000, i); i += 3; data.set(nUp, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(nUp, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(nUp, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(nUp, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(nUp, i); i += 3; data.set([0, 1, v], i); i += 3;
         break;
       }
       case Face.DOWN: {
-        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v111, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(nDown, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(nDown, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(nDown, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(nDown, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(nDown, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v111, i); i += 3; data.set(nDown, i); i += 3; data.set([1, 1, v], i); i += 3;
         break;
       }
       case Face.BACK: {
-        data.set(v000, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v100, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v010, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
-        data.set(v110, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v000, i); i += 3; data.set(nBack, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(nBack, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(nBack, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v100, i); i += 3; data.set(nBack, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v010, i); i += 3; data.set(nBack, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v110, i); i += 3; data.set(nBack, i); i += 3; data.set([1, 1, v], i); i += 3;
         break;
       }
       case Face.FRONT: {
-        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v001, i); i += 3; data.set(normal, i); i += 3; data.set([1, 0, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v011, i); i += 3; data.set(normal, i); i += 3; data.set([1, 1, v], i); i += 3;
-        data.set(v101, i); i += 3; data.set(normal, i); i += 3; data.set([0, 0, v], i); i += 3;
-        data.set(v111, i); i += 3; data.set(normal, i); i += 3; data.set([0, 1, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(nFront, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v001, i); i += 3; data.set(nFront, i); i += 3; data.set([1, 0, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(nFront, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v011, i); i += 3; data.set(nFront, i); i += 3; data.set([1, 1, v], i); i += 3;
+        data.set(v101, i); i += 3; data.set(nFront, i); i += 3; data.set([0, 0, v], i); i += 3;
+        data.set(v111, i); i += 3; data.set(nFront, i); i += 3; data.set([0, 1, v], i); i += 3;
         break;
       }
     }

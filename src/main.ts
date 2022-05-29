@@ -4,24 +4,35 @@ import Game from './game';
 // setup canvas
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 
-function getImgs(name: string) {
-  return [
-    document.getElementById(`${name}-left`) as HTMLImageElement,
-    document.getElementById(`${name}-right`) as HTMLImageElement,
-    document.getElementById(`${name}-up`) as HTMLImageElement,
-    document.getElementById(`${name}-down`) as HTMLImageElement,
-    document.getElementById(`${name}-front`) as HTMLImageElement,
-    document.getElementById(`${name}-back`) as HTMLImageElement,
-  ] as BlockTextures
+async function waitLoad(str: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = document.getElementById(str) as HTMLImageElement;
+    img.onerror = reject;
+    img.onload = () => resolve(img)
+    if(img.complete) {
+        resolve(img);
+    }
+  });
+}
+
+async function getImgs(name: string) {
+  return await Promise.all([
+    waitLoad(`${name}-left`),
+    waitLoad(`${name}-right`),
+    waitLoad(`${name}-up`),
+    waitLoad(`${name}-down`),
+    waitLoad(`${name}-front`),
+    waitLoad(`${name}-back`),
+  ]) as BlockTextures
 }
 
 const blockManager = new BlockManager(16, [
   { name: "air", pointable: false, light: false, transparent: true, },
-  { name: "grass", pointable: true, light: false, transparent: false, textures: getImgs("grass"), },
-  { name: "soil", pointable: true, light: false, transparent: false, textures: getImgs("soil"), },
-  { name: "stone", pointable: true, light: false, transparent: false, textures: getImgs("stone"), },
-  { name: "glass", pointable: true, light: false, transparent: true, textures: getImgs("glass"), },
-  { name: "light", pointable: true, light: true, transparent: false, textures: getImgs("light"), },
+  { name: "grass", pointable: true, light: false, transparent: false, textures: await getImgs("grass"), },
+  { name: "soil", pointable: true, light: false, transparent: false, textures: await getImgs("soil"), },
+  { name: "stone", pointable: true, light: false, transparent: false, textures: await getImgs("stone"), },
+  { name: "glass", pointable: true, light: false, transparent: true, textures: await getImgs("glass"), },
+  { name: "light", pointable: true, light: true, transparent: false, textures: await getImgs("light"), },
 ]);
 
 
