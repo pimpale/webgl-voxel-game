@@ -1,4 +1,4 @@
-import { RADIANS, vec3, vec3_cross, vec3_add, vec3_scale, vec3_norm, clamp } from './utils';
+import { RADIANS, vec3, vec3_cross, vec3_add, vec3_scale, vec3_norm, clamp, vec3_sub } from './utils';
 import { Camera, CameraBasis } from './camera'
 import World, { Highlight } from './world'
 import { getNormal } from './block';
@@ -252,14 +252,13 @@ export class PhysicsComponent extends Component {
   applySystem = (e: Entity) => {
     // TODO: this system only lets you fly
     // only move if the block is transparent
-    const block = this.world.getBlock(this.wantGo);
-    if (block === null || !this.world.blockManager.defs[block].pointable) {
-      e.pos = vec3_add(e.pos, this.wantGo);
+    const block = this.world.getBlock(vec3_add(e.pos, this.wantGo));
+    if (block !== null && !this.world.blockManager.defs[block].pointable) {
+        e.pos = vec3_add(e.pos, this.wantGo);
+        console.log(e.pos);
+        console.log(this.wantGo);
     }
     this.wantGo = [0, 0, 0];
-
-    // left edge is Math.floor(x)
-    // right edge is Math.ceil(x)
   };
 }
 
