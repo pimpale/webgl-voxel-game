@@ -83,6 +83,15 @@ export class PlayerControlComponent extends Component {
       if (e.key === "f") {
         this.fast = !this.fast;
       }
+      if (e.key === "m") {
+        if (this.fly) {
+          this.fly = false;
+          this.physics.enablePhysics();
+        } else {
+          this.fly = true;
+          this.physics.disablePhysics();
+        }
+      }
     })
 
     window.addEventListener("keydown", e => this.keys.add(e.code));
@@ -253,10 +262,18 @@ export class PhysicsComponent extends Component {
   private readonly p_y_rad = 1.5;
   private readonly n_y_rad = 0.3;
 
+  private physicsEnabled = false;
+
   constructor(world: World) {
     super();
     this.world = world;
   }
+
+  // physics
+  enablePhysics = () => this.physicsEnabled = true;
+  disablePhysics = () => this.physicsEnabled = false;
+  getPhysicsEnabled = () => this.physicsEnabled;
+
 
   go = (disp: vec3) => {
     this.wantGo = vec3_add(this.wantGo, disp);
@@ -266,56 +283,57 @@ export class PhysicsComponent extends Component {
     this.wantJump = true;
   }
 
-  // TODO: Apply collision detection here.
-  // get world status and set entity location to something
-  // also do jumping using up velocity
   applySystem = (e: Entity) => {
-    // TODO: this system only lets you fly
-    // only move if the block is transparent
-
-    // create bounding box of player
     const desiredLoc = vec3_add(e.pos, this.wantGo);
-    let bbPlayer: BoundingBox = {
-      minX: desiredLoc[0] - this.x_rad,
-      maxX: desiredLoc[0] + this.x_rad,
-      minY: desiredLoc[1] - this.n_y_rad,
-      maxY: desiredLoc[1] + this.p_y_rad,
-      minZ: desiredLoc[2] - this.z_rad,
-      maxZ: desiredLoc[2] + this.z_rad,
-    };
+    if (this.physicsEnabled) {
+      // walk mode
 
-    let permitted = true;
+      let bbPlayer: BoundingBox = {
+        minX: desiredLoc[0] - this.x_rad,
+        maxX: desiredLoc[0] + this.x_rad,
+        minY: desiredLoc[1] - this.n_y_rad,
+        maxY: desiredLoc[1] + this.p_y_rad,
+        minZ: desiredLoc[2] - this.z_rad,
+        maxZ: desiredLoc[2] + this.z_rad,
+      };
 
-    // iterate through the 2 layers of blocks surrounding a player
-    // permit movement only if none of them itersect
-    for (let x = -2; x <= 2; x++) {
-      for (let y = -2; y <= 2; y++) {
-        for (let z = -2; z <= 2; z++) {
-          const pos = vec3_add(desiredLoc, [x, y, z]).map(x => Math.floor(x)) as vec3;
-          const block = this.world.getBlock(pos);
-          if (block != null && this.world.blockManager.defs[block].pointable) {
-            // create bounding box of block
-            let bbBlock: BoundingBox = {
-              minX: pos[0],
-              maxX: pos[0] + 1,
-              minY: pos[1],
-              maxY: pos[1] + 1,
-              minZ: pos[2],
-              maxZ: pos[2] + 1,
-            };
-            if (intersects(bbPlayer, bbBlock)) {
-              permitted = false;
-              break;
+      let permitted = true;
+
+      // iterate through the 2 layers of blocks surrounding a player
+      // permit movement only if none of them itersect
+      for (let x = -2; x <= 2; x++) {
+        for (let y = -2; y <= 2; y++) {
+          for (let z = -2; z <= 2; z++) {
+            const pos = vec3_add(desiredLoc, [x, y, z]).map(x => Math.floor(x)) as vec3;
+            const block = this.world.getBlock(pos);
+            if (block != null && this.world.blockManager.defs[block].pointable) {
+              // create bounding box of block
+              let bbBlock: BoundingBox = {
+                minX: pos[0],
+                maxX: pos[0] + 1,
+                minY: pos[1],
+                maxY: pos[1] + 1,
+                minZ: pos[2],
+                maxZ: pos[2] + 1,
+              };
+              if (intersects(bbPlayer, bbBlock)) {
+                permitted = false;
+                break;
+              }
             }
           }
         }
       }
-    }
 
-    if (permitted) {
+      if (permitted) {
+        e.pos = vec3_add(e.pos, this.wantGo);
+      }
+      this.wantGo = [0, 0, 0];
+    } else {
+      // fly mode
       e.pos = vec3_add(e.pos, this.wantGo);
+      this.wantGo = [0, 0, 0];
     }
-    this.wantGo = [0, 0, 0];
 
     // left edge is Math.floor(x)
     // right edge is Math.ceil(x)

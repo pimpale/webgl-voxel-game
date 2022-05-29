@@ -103,7 +103,7 @@ out vec4 v_outColor;
 void main() {
   vec4 color = texture(u_textureAtlas, v_tuv);
 
-  float lightSum = 0.0;
+  float lightSum = 0.4;
 
   for(int i = 0; i < u_lightNumber; i++) {
     mat4 mvp = mat4(
@@ -137,8 +137,6 @@ void main() {
         lightSum += 2.0*diffuseIntensity*intensity;
     }
   }
-  // global ambient light
-  lightSum = max(lightSum, 0.4);
   v_outColor = vec4(color.rgb*lightSum, color.a);
 }
 `;
@@ -741,7 +739,7 @@ class World {
 
   setBlock = (coords: vec3, val: number) => {
     const setMeshStaleIfExists = (chunkLoc: vec3) => {
-      const chunk = this.chunk_map.get(JSON.stringify(chunkCoord));
+      const chunk = this.chunk_map.get(JSON.stringify(chunkLoc));
       if (chunk && chunk.mesh) {
         chunk.mesh.stale = true;
       }
@@ -750,10 +748,11 @@ class World {
     const chunkCoord = this.getWorldChunkLoc(coords);
     const chunk = this.chunk_map.get(JSON.stringify(chunkCoord));
     if (chunk && chunk.blocks) {
+      const x = Math.floor(mod(coords[0], CHUNK_X_SIZE));
+      const y = Math.floor(mod(coords[1], CHUNK_Y_SIZE));
+      const z = Math.floor(mod(coords[2], CHUNK_Z_SIZE));
 
-      const x = mod(coords[0], CHUNK_X_SIZE);
-      const y = mod(coords[1], CHUNK_Y_SIZE);
-      const z = mod(coords[2], CHUNK_Z_SIZE);
+      console.log(x, y, z);
 
       chunk.blocks[chunkDataIndex(x, y, z)] = val;
 
