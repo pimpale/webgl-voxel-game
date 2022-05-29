@@ -251,8 +251,15 @@ export class PhysicsComponent extends Component {
   // also do jumping using up velocity
   applySystem = (e: Entity) => {
     // TODO: this system only lets you fly
-    e.pos = vec3_add(e.pos, this.wantGo);
+    // only move if the block is transparent
+    const block = this.world.getBlock(this.wantGo);
+    if (block === null || !this.world.blockManager.defs[block].pointable) {
+      e.pos = vec3_add(e.pos, this.wantGo);
+    }
     this.wantGo = [0, 0, 0];
+
+    // left edge is Math.floor(x)
+    // right edge is Math.ceil(x)
   };
 }
 

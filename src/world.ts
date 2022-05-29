@@ -208,7 +208,7 @@ class World {
   private chunk_map: Map<string, Chunk>;
 
   private gl: WebGL2RenderingContext;
-  private blockManager: BlockManager
+  public blockManager: BlockManager
 
   getWorldChunkLoc = (cameraLoc: vec3) => [
     Math.floor(cameraLoc[0] / CHUNK_X_SIZE),
