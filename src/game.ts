@@ -41,7 +41,7 @@ class Game {
 
     this.gl = canvas.getContext('webgl2')!
 
-    this.world = new World(46, this.camera.getPos(), worldup, this.gl, blockManager, this.camera);
+    this.world = new World(5, this.camera.getPos(), worldup, this.gl, blockManager, this.camera);
 
     // construct player
     const playerPhysics = new PhysicsComponent(this.world);

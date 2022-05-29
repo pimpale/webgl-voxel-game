@@ -138,7 +138,7 @@ void main() {
     }
   }
   // global ambient light
-  lightSum = max(lightSum, 0.2);
+  lightSum = max(lightSum, 0.4);
   v_outColor = vec4(color.rgb*lightSum, color.a);
 }
 `;
@@ -933,8 +933,8 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
         const valHere = noise(wx / scale1, wy / scale1, wz / scale1);
         const valAbove = noise(wx / scale1, (wy - 1) / scale1, wz / scale1);
 
-        if (valHere > 0) {
-          if (valAbove > 0) {
+        if (valHere > 0.5) {
+          if (valAbove > 0.5) {
             blocks[off_xyz] = 3; // stone
           } else {
             blocks[off_xyz] = 1; // grass

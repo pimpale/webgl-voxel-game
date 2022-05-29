@@ -224,6 +224,21 @@ export class CameraComponent extends Component {
   }
 }
 
+type BoundingBox = {
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  minZ: number,
+  maxZ: number,
+}
+
+function intersects(a: BoundingBox, b: BoundingBox) {
+  return (a.minX <= b.maxX && a.maxX >= b.minX) &&
+    (a.minY <= b.maxY && a.maxY >= b.minY) &&
+    (a.minZ <= b.maxZ && a.maxZ >= b.minZ);
+}
+
 // TODO: this component should be implementing collision code
 export class PhysicsComponent extends Component {
   private world: World;
@@ -232,6 +247,11 @@ export class PhysicsComponent extends Component {
 
   private wantGo: vec3 = [0, 0, 0];
   private wantJump = false;
+
+  private readonly x_rad = 0.3;
+  private readonly z_rad = 0.3;
+  private readonly p_y_rad = 1.5;
+  private readonly n_y_rad = 0.3;
 
   constructor(world: World) {
     super();
@@ -252,18 +272,48 @@ export class PhysicsComponent extends Component {
   applySystem = (e: Entity) => {
     // TODO: this system only lets you fly
     // only move if the block is transparent
-    const block = this.world.getBlock(vec3_add(e.pos, this.wantGo));
-    //console.log(this.wantGo);
-    if (this.wantGo != [0,0,0]) {
-      const nextBlock = this.world.getBlock(vec3_add(e.pos, vec3_add(this.wantGo, this.wantGo)));
-      // if the next block after the one we want to move to is solid, don't move
-      if (nextBlock !== null && this.world.blockManager.defs[nextBlock].pointable) {
-        this.wantGo = [0, 0, 0];
+
+    // create bounding box of player
+    const desiredLoc = vec3_add(e.pos, this.wantGo);
+    let bbPlayer: BoundingBox = {
+      minX: desiredLoc[0] - this.x_rad,
+      maxX: desiredLoc[0] + this.x_rad,
+      minY: desiredLoc[1] - this.n_y_rad,
+      maxY: desiredLoc[1] + this.p_y_rad,
+      minZ: desiredLoc[2] - this.z_rad,
+      maxZ: desiredLoc[2] + this.z_rad,
+    };
+
+    let permitted = true;
+
+    // iterate through the 2 layers of blocks surrounding a player
+    // permit movement only if none of them itersect
+    for (let x = -2; x <= 2; x++) {
+      for (let y = -2; y <= 2; y++) {
+        for (let z = -2; z <= 2; z++) {
+          const pos = vec3_add(desiredLoc, [x, y, z]).map(x => Math.floor(x)) as vec3;
+          const block = this.world.getBlock(pos);
+          if (block != null && this.world.blockManager.defs[block].pointable) {
+            // create bounding box of block
+            let bbBlock: BoundingBox = {
+              minX: pos[0],
+              maxX: pos[0] + 1,
+              minY: pos[1],
+              maxY: pos[1] + 1,
+              minZ: pos[2],
+              maxZ: pos[2] + 1,
+            };
+            if (intersects(bbPlayer, bbBlock)) {
+              permitted = false;
+              break;
+            }
+          }
+        }
       }
     }
-    if (block !== null && !this.world.blockManager.defs[block].pointable) {
-        e.pos = vec3_add(e.pos, this.wantGo);
-        console.log(e.pos);
+
+    if (permitted) {
+      e.pos = vec3_add(e.pos, this.wantGo);
     }
     this.wantGo = [0, 0, 0];
 
