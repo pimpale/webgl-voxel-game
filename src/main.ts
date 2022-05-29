@@ -1,16 +1,13 @@
 import { BlockManager, BlockDef, BlockTextures, } from './block';
 import Game from './game';
 
-// setup canvas
-const canvas = document.getElementById('canvas') as HTMLCanvasElement;
-
 async function waitLoad(str: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = document.getElementById(str) as HTMLImageElement;
     img.onerror = reject;
     img.onload = () => resolve(img)
-    if(img.complete) {
-        resolve(img);
+    if (img.complete) {
+      resolve(img);
     }
   });
 }
@@ -26,19 +23,24 @@ async function getImgs(name: string) {
   ]) as BlockTextures
 }
 
-const blockManager = new BlockManager(16, [
-  { name: "air", pointable: false, light: false, transparent: true, },
-  { name: "grass", pointable: true, light: false, transparent: false, textures: await getImgs("grass"), },
-  { name: "soil", pointable: true, light: false, transparent: false, textures: await getImgs("soil"), },
-  { name: "stone", pointable: true, light: false, transparent: false, textures: await getImgs("stone"), },
-  { name: "glass", pointable: true, light: false, transparent: true, textures: await getImgs("glass"), },
-  { name: "light", pointable: true, light: true, transparent: false, textures: await getImgs("light"), },
-]);
+// setup canvas
+async function main() {
+  // load resources
+  const blockManager = new BlockManager(16, [
+    { name: "air", pointable: false, light: false, transparent: true, },
+    { name: "grass", pointable: true, light: false, transparent: false, textures: await getImgs("grass"), },
+    { name: "soil", pointable: true, light: false, transparent: false, textures: await getImgs("soil"), },
+    { name: "stone", pointable: true, light: false, transparent: false, textures: await getImgs("stone"), },
+    { name: "glass", pointable: true, light: false, transparent: true, textures: await getImgs("glass"), },
+    { name: "light", pointable: true, light: true, transparent: false, textures: await getImgs("light"), },
+  ]);
 
+  // make game from canvas
+  const canvas = document.getElementById('canvas') as HTMLCanvasElement;
+  const game = new Game(canvas, blockManager);
 
+  // start game
+  game.displayHelp();
+}
 
-// make game from canvas
-const game = new Game(canvas, blockManager);
-
-// start game
-game.displayHelp();
+main();
