@@ -78,6 +78,8 @@ class Game {
 
   displayHelp = () => this.animationLoop();
 
+  updateTime = false;
+
   animationLoop = () => {
     // update all entities
     for (const entity of this.entityList) {
@@ -85,10 +87,12 @@ class Game {
     }
 
     // update the world with the camera position
-    this.world.update(this.camera.getPos());
-
-    // draw triangles
-    this.world.render(this.camera.getMvp());
+    if (this.updateTime) {
+      this.world.update(this.camera.getPos());
+    } else {
+      this.world.render(this.camera.getMvp());
+    }
+    this.updateTime = !this.updateTime;
 
     this.requestID = window.requestAnimationFrame(this.animationLoop);
   }

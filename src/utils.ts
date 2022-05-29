@@ -5,14 +5,17 @@ export function RADIANS(x: number) {
   return Math.PI * x / 180;
 }
 
-// normalizes a vector in place
-export function vec3_norm(a: vec3): vec3 {
+export function vec3_length(a:vec3): number {
   let sum = 0;
   for (const i of a) {
     sum += i * i;
   }
-  const dist = Math.sqrt(sum);
+  return Math.sqrt(sum);
+}
 
+// normalizes a vector in place
+export function vec3_norm(a: vec3): vec3 {
+  const dist = vec3_length(a);
   return a.map(x => x / dist) as vec3;
 }
 

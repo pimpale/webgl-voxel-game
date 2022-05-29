@@ -1,5 +1,5 @@
 import { makeNoise3D } from 'open-simplex-noise';
-import { vec3, vec3_add, vec3_sub, vec3_dot, assert, mod, mat4_perspective, RADIANS, mat4_look_at, mat4_mul, mat4_to_uniform, mat4, mat4_transpose } from './utils';
+import { vec3, vec3_add, vec3_sub, vec3_dot, assert, mod, mat4_perspective, RADIANS, mat4_look_at, mat4_mul, mat4_to_uniform, mat4, mat4_transpose, vec3_length } from './utils';
 import { BlockDef, BlockManager, Face, getNormal } from './block';
 import { createProgram, createShader } from './webgl';
 import { Camera } from './camera';
@@ -11,9 +11,9 @@ const CHUNK_MESH_COST = 1;
 const CHUNK_MKGRAPHICS_COST = 1;
 const CHUNK_RENDERLIGHT_COST = 1;
 
-const CHUNK_X_SIZE = 16;
-const CHUNK_Y_SIZE = 16;
-const CHUNK_Z_SIZE = 16;
+const CHUNK_X_SIZE = 24;
+const CHUNK_Y_SIZE = 24;
+const CHUNK_Z_SIZE = 24;
 
 
 // how many chunks to render
@@ -31,12 +31,18 @@ type Chunk = {
   blocks?: Uint16Array,
   mesh?: { stale: boolean, solid: BlockFace[], transparent: BlockFace[], lights: BlockFace[] }
   graphics?: { stale: boolean, solid: Graphics, transparent: Graphics }
-  lights?: { stale: boolean, tex: WebGLTexture, fbs: WebGLFramebuffer[], pos: vec3[], matrixes: mat4[] }
+  lights?: { stale: boolean, data: ChunkLightingGPUData, pos: vec3[], matrixes: mat4[] }
 }
 
-const SHADOWMAP_SIZE = 100;
+// these should not get deleted! they merely transfer ownership (to avoid the massive costs of creation/deletion)
+type ChunkLightingGPUData = {
+  tex: WebGLTexture,
+  fbs: WebGLFramebuffer[],
+}
+
+const SHADOWMAP_SIZE = 64;
 // max number of lights to render per chunk
-const LIGHTS_PER_CHUNK = 10;
+const LIGHTS_PER_CHUNK = 20;
 // there are 9 chunks surrounding us
 const N_LIGHTS = 9 * LIGHTS_PER_CHUNK;
 
@@ -121,7 +127,8 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    float currentDepth = (projectedCoord.z + 1.0)/2.0 - 0.01;
+    const float bias = 0.02;
+    float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
 
     if(inRange && currentDepth <= depthMapDepth) {
         float intensity = pow((1.0-currentDepth), 0.5);
@@ -194,6 +201,9 @@ class World {
   // list of active <id, highlight> pairs
   private highlights: Map<string, Graphics>;
 
+  // list storing free ChunkLightingGPUData (put here after a chunk is deleted)
+  private freeChunkLightingGPUData: ChunkLightingGPUData[];
+
   // hashmap storing chunks
   private chunk_map: Map<string, Chunk>;
 
@@ -264,6 +274,12 @@ class World {
     this.gl.useProgram(this.shadowProgram);
     this.shadowMvpMatLoc = this.gl.getUniformLocation(this.shadowProgram, "u_mvpMat")!;
 
+    // create data SUPER EXPENSIVE
+    this.freeChunkLightingGPUData = [];
+    for (let i = 0; i < (RENDER_RADIUS_X * 2 + 1) * (RENDER_RADIUS_Y * 2 + 1) * (RENDER_RADIUS_Z * 2 + 1); i++) {
+      this.freeChunkLightingGPUData.push(createChunkLightingGPUData(this.gl));
+    }
+
     this.updateCameraLoc();
   }
 
@@ -322,10 +338,6 @@ class World {
     this.deleteGraphics(graphics.transparent);
   }
 
-  private deleteChunkLights = (lights: { tex: WebGLTexture }) => {
-    this.gl.deleteTexture(lights.tex);
-  }
-
   private shouldBeLoaded = (worldChunkCoords: vec3) => {
     const disp = vec3_sub(worldChunkCoords, this.worldChunkCenterLoc);
     return (disp[0] >= -RENDER_RADIUS_X && disp[0] <= RENDER_RADIUS_X) &&
@@ -334,7 +346,6 @@ class World {
   }
   // if the camera new chunk coords misalign with our current chunk coords then
   private updateCameraLoc = () => {
-
     // delete any generated chunks
     for (const [coord, chunk] of this.chunk_map) {
       if (!this.shouldBeLoaded(JSON.parse(coord))) {
@@ -342,22 +353,37 @@ class World {
           this.deleteChunkGraphics(chunk.graphics);
         }
         if (chunk.lights !== undefined) {
-          this.deleteChunkLights(chunk.lights);
+          this.freeChunkLightingGPUData.push(chunk.lights.data);
         }
         this.chunk_map.delete(coord);
       }
     }
 
-    // initialize all of our neighboring chunks to be on the load list
+    // create list of all locs that should be rendered
+    const toLoad :vec3[] = []
     for (let x = -RENDER_RADIUS_X; x <= RENDER_RADIUS_X; x++) {
       for (let y = -RENDER_RADIUS_Y; y <= RENDER_RADIUS_Y; y++) {
         for (let z = -RENDER_RADIUS_Z; z <= RENDER_RADIUS_Z; z++) {
-          const chunkCoord = JSON.stringify(vec3_add(this.worldChunkCenterLoc, [x, y, z]));
-          if (this.chunk_map.get(chunkCoord) === undefined) {
-            this.chunk_map.set(chunkCoord, {});
-          }
+          toLoad.push(vec3_add(this.worldChunkCenterLoc, [x, y, z]));
         }
       }
+    }
+
+    // sort by closest to us
+    toLoad.sort((a, b) => {
+        const a_d = vec3_length(vec3_sub(a, this.worldChunkCenterLoc));
+        const b_d = vec3_length(vec3_sub(b, this.worldChunkCenterLoc));
+
+        return a_d - b_d;
+    });
+
+    // initialize if not exists
+    for(const coord of toLoad) {
+        const strCoord =JSON.stringify(coord);
+        const chunk = this.chunk_map.get(strCoord);
+        if(chunk === undefined) {
+            this.chunk_map.set(strCoord, {})
+        }
     }
   }
 
@@ -399,44 +425,6 @@ class World {
   }
 
   // we use a 3d texture to store all of the textures in a cube
-  private createLightData = (): { tex: WebGLTexture, fbs: WebGLFramebuffer[] } => {
-    const depthTexture = this.gl.createTexture()!;
-    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, depthTexture);
-    this.gl.texImage3D(
-      this.gl.TEXTURE_2D_ARRAY,      // target
-      0,                    // mip level
-      this.gl.DEPTH_COMPONENT32F, // internal format
-      SHADOWMAP_SIZE,   // width
-      SHADOWMAP_SIZE,   // hdepthMapDepthight
-      N_LIGHTS,   // height
-      0,                  // border
-      this.gl.DEPTH_COMPONENT, // format
-      this.gl.FLOAT,           // type
-      null,              // data
-    );
-    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
-    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
-    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
-    this.gl.texParameteri(this.gl.TEXTURE_2D_ARRAY, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
-
-    const fbs: WebGLFramebuffer[] = []
-
-    for (let i = 0; i < N_LIGHTS; i++) {
-      const depthFramebuffer = this.gl.createFramebuffer()!;
-      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, depthFramebuffer);
-      this.gl.framebufferTextureLayer(
-        this.gl.FRAMEBUFFER,       // target
-        this.gl.DEPTH_ATTACHMENT,  // attachment point
-        depthTexture,              // texture
-        0,                         // mip level
-        i,                         // layer
-      );
-      fbs.push(depthFramebuffer);
-    }
-
-    return { tex: depthTexture, fbs };
-  }
-
   private renderShadowMap = (
     tex: WebGLTexture,
     fb: WebGLFramebuffer,
@@ -627,14 +615,11 @@ class World {
 
         // update data
         if (chunk.lights === undefined) {
-          const data = this.createLightData();
-          chunk.lights = {
-            tex: data.tex,
-            fbs: data.fbs,
-            matrixes,
-            pos,
-            stale: true,
+          const data = this.freeChunkLightingGPUData.pop();
+          if (data === undefined) {
+            continue;
           }
+          chunk.lights = { matrixes, pos, data, stale: true, }
         } else {
           chunk.lights.pos = pos;
           chunk.lights.matrixes = matrixes;
@@ -642,7 +627,7 @@ class World {
 
         // now iterate through our graphics map and render world
         for (let i = 0; i < chunk.lights.matrixes.length; i++) {
-          this.renderShadowMap(chunk.lights.tex, chunk.lights.fbs[i], chunk.lights.matrixes[i], solidsToRender);
+          this.renderShadowMap(chunk.lights.data.tex, chunk.lights.data.fbs[i], chunk.lights.matrixes[i], solidsToRender);
         }
 
         // mark not stale
@@ -694,7 +679,7 @@ class World {
 
         // bind this chunk's lights to tex 1
         this.gl.activeTexture(this.gl.TEXTURE1);
-        this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, chunk.lights.tex);
+        this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, chunk.lights.data.tex);
 
         // set n lights correctly
         this.gl.uniform1i(this.renderLightNumber, chunk.lights.matrixes.length);
@@ -1191,5 +1176,45 @@ function writeMesh(faces: BlockFace[]): Float32Array {
   }
   return data;
 }
+
+const createChunkLightingGPUData = (gl: WebGL2RenderingContext): ChunkLightingGPUData => {
+  const depthTexture = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, depthTexture);
+  gl.texImage3D(
+    gl.TEXTURE_2D_ARRAY,      // target
+    0,                    // mip level
+    gl.DEPTH_COMPONENT32F, // internal format
+    SHADOWMAP_SIZE,   // width
+    SHADOWMAP_SIZE,   // hdepthMapDepthight
+    N_LIGHTS,   // height
+    0,                  // border
+    gl.DEPTH_COMPONENT, // format
+    gl.FLOAT,           // type
+    null,              // data
+  );
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  const fbs: WebGLFramebuffer[] = []
+
+  for (let i = 0; i < N_LIGHTS; i++) {
+    const depthFramebuffer = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, depthFramebuffer);
+    gl.framebufferTextureLayer(
+      gl.FRAMEBUFFER,       // target
+      gl.DEPTH_ATTACHMENT,  // attachment point
+      depthTexture,              // texture
+      0,                         // mip level
+      i,                         // layer
+    );
+    fbs.push(depthFramebuffer);
+  }
+
+  return { tex: depthTexture, fbs };
+}
+
+
 
 export default World;

@@ -139,7 +139,7 @@ export class PlayerControlComponent extends Component {
     // only do things if control is locked
     if (this.controlsEnabled) {
       const forwarddir = vec3_norm(vec3_cross(basis.right, e.worldup));
-      let movscale = this.fast ? 0.1 : 0.02;
+      let movscale = this.fast ? 0.1 : 0.04;
       if (this.fly) {
         // fly
         if (this.keys.has('KeyW')) {
@@ -301,13 +301,13 @@ export class BlockInteractionComponent extends Component {
   // figure out where camera is looking and break block
   applySystem = (e: Entity) => {
     for (const [loc, count] of this.breakRequests) {
-      if (count > 100) {
+      if (count > 30) {
         this.world.setBlock(JSON.parse(loc), 0);
         this.breakRequests.delete(loc);
       }
     }
     for (const [loc, count] of this.placeRequests) {
-      if (count > 50) {
+      if (count > 20) {
         this.world.setBlock(JSON.parse(loc), this.placeID);
         this.placeRequests.delete(loc);
       }
