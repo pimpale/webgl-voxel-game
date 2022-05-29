@@ -253,12 +253,22 @@ export class PhysicsComponent extends Component {
     // TODO: this system only lets you fly
     // only move if the block is transparent
     const block = this.world.getBlock(vec3_add(e.pos, this.wantGo));
+    //console.log(this.wantGo);
+    if (this.wantGo != [0,0,0]) {
+      const nextBlock = this.world.getBlock(vec3_add(e.pos, vec3_add(this.wantGo, this.wantGo)));
+      // if the next block after the one we want to move to is solid, don't move
+      if (nextBlock !== null && this.world.blockManager.defs[nextBlock].pointable) {
+        this.wantGo = [0, 0, 0];
+      }
+    }
     if (block !== null && !this.world.blockManager.defs[block].pointable) {
         e.pos = vec3_add(e.pos, this.wantGo);
         console.log(e.pos);
-        console.log(this.wantGo);
     }
     this.wantGo = [0, 0, 0];
+
+    // left edge is Math.floor(x)
+    // right edge is Math.ceil(x)
   };
 }
 
