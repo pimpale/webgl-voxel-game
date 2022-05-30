@@ -12,8 +12,6 @@ export abstract class Component {
   abstract applySystem: (e: Entity) => void;
 }
 
-
-
 // https://stackoverflow.com/questions/1349404/generate-random-string-characters-in-javascript
 // generateId :: Integer -> String
 function generateId(len: number) {
@@ -184,7 +182,7 @@ export class PlayerControlComponent extends Component {
           this.physics.go(vec3_scale(basis.right, -movscale));
         }
         if (this.keys.has('Space')) {
-          this.physics.jump()
+          this.physics.jump();
         }
       }
 
@@ -262,6 +260,10 @@ export class PhysicsComponent extends Component {
   private readonly p_y_rad = 1.5;
   private readonly n_y_rad = 0.3;
 
+  private readonly side_depth = 0.1;
+  private readonly head_depth = 0.1;
+  private readonly foot_depth = 0.6;
+
   private physicsEnabled = false;
 
   constructor(world: World) {
@@ -271,7 +273,10 @@ export class PhysicsComponent extends Component {
 
   // physics
   enablePhysics = () => this.physicsEnabled = true;
-  disablePhysics = () => this.physicsEnabled = false;
+  disablePhysics = () => {
+      this.physicsEnabled = false;
+      this.upVel = 0;
+  }
   getPhysicsEnabled = () => this.physicsEnabled;
 
 
@@ -283,60 +288,166 @@ export class PhysicsComponent extends Component {
     this.wantJump = true;
   }
 
-  applySystem = (e: Entity) => {
-    const desiredLoc = vec3_add(e.pos, this.wantGo);
-    if (this.physicsEnabled) {
-      // walk mode
+  // this function calculates where the player should go
+  private calculatePlayerIntersection = (desiredLoc: vec3) => {
+    // calculate 6 player bounding boxes
+    let bbLeft: BoundingBox = {
+      minX: desiredLoc[0] - this.x_rad,
+      maxX: desiredLoc[0] - this.x_rad + this.side_depth,
+      minY: desiredLoc[1] - this.n_y_rad + this.head_depth,
+      maxY: desiredLoc[1] + this.p_y_rad - this.foot_depth ,
+      minZ: desiredLoc[2] - this.z_rad,
+      maxZ: desiredLoc[2] + this.z_rad,
+    };
+    let bbRight: BoundingBox = {
+      minX: desiredLoc[0] + this.x_rad - this.side_depth,
+      maxX: desiredLoc[0] + this.x_rad,
+      minY: desiredLoc[1] - this.n_y_rad + this.head_depth,
+      maxY: desiredLoc[1] + this.p_y_rad - this.foot_depth ,
+      minZ: desiredLoc[2] - this.z_rad,
+      maxZ: desiredLoc[2] + this.z_rad,
+    };
+    let bbBack: BoundingBox = {
+      minX: desiredLoc[0] - this.x_rad,
+      maxX: desiredLoc[0] + this.x_rad,
+      minY: desiredLoc[1] - this.n_y_rad + this.head_depth,
+      maxY: desiredLoc[1] + this.p_y_rad - this.foot_depth ,
+      minZ: desiredLoc[2] - this.z_rad,
+      maxZ: desiredLoc[2] - this.z_rad + this.side_depth,
+    };
+    let bbFront: BoundingBox = {
+      minX: desiredLoc[0] - this.x_rad,
+      maxX: desiredLoc[0] + this.x_rad,
+      minY: desiredLoc[1] - this.n_y_rad + this.head_depth,
+      maxY: desiredLoc[1] + this.p_y_rad - this.foot_depth ,
+      minZ: desiredLoc[2] + this.z_rad - this.side_depth,
+      maxZ: desiredLoc[2] + this.z_rad,
+    };
+    let bbUp: BoundingBox = {
+      minX: desiredLoc[0] - this.x_rad,
+      maxX: desiredLoc[0] + this.x_rad,
+      minY: desiredLoc[1] - this.n_y_rad,
+      maxY: desiredLoc[1] - this.n_y_rad + this.head_depth,
+      minZ: desiredLoc[2] - this.z_rad,
+      maxZ: desiredLoc[2] + this.z_rad,
+    };
+    let bbDown: BoundingBox = {
+      minX: desiredLoc[0] - this.x_rad,
+      maxX: desiredLoc[0] + this.x_rad,
+      minY: desiredLoc[1] + this.p_y_rad - this.foot_depth,
+      maxY: desiredLoc[1] + this.p_y_rad,
+      minZ: desiredLoc[2] - this.z_rad,
+      maxZ: desiredLoc[2] + this.z_rad,
+    };
 
-      let bbPlayer: BoundingBox = {
-        minX: desiredLoc[0] - this.x_rad,
-        maxX: desiredLoc[0] + this.x_rad,
-        minY: desiredLoc[1] - this.n_y_rad,
-        maxY: desiredLoc[1] + this.p_y_rad,
-        minZ: desiredLoc[2] - this.z_rad,
-        maxZ: desiredLoc[2] + this.z_rad,
-      };
+    let intersectLeft = false;
+    let intersectRight = false;
+    let intersectUp = false;
+    let intersectDown = false;
+    let intersectBack = false;
+    let intersectFront = false;
 
-      let permitted = true;
-
-      // iterate through the 2 layers of blocks surrounding a player
-      // permit movement only if none of them itersect
-      for (let x = -2; x <= 2; x++) {
-        for (let y = -2; y <= 2; y++) {
-          for (let z = -2; z <= 2; z++) {
-            const pos = vec3_add(desiredLoc, [x, y, z]).map(x => Math.floor(x)) as vec3;
-            const block = this.world.getBlock(pos);
-            if (block != null && this.world.blockManager.defs[block].pointable) {
-              // create bounding box of block
-              let bbBlock: BoundingBox = {
-                minX: pos[0],
-                maxX: pos[0] + 1,
-                minY: pos[1],
-                maxY: pos[1] + 1,
-                minZ: pos[2],
-                maxZ: pos[2] + 1,
-              };
-              if (intersects(bbPlayer, bbBlock)) {
-                permitted = false;
-                break;
-              }
+    for (let x = -2; x <= 2; x++) {
+      for (let y = -2; y <= 2; y++) {
+        for (let z = -2; z <= 2; z++) {
+          const pos = vec3_add(desiredLoc, [x, y, z]).map(x => Math.floor(x)) as vec3;
+          const block = this.world.getBlock(pos);
+          if (block != null && this.world.blockManager.defs[block].pointable) {
+            // create bounding box of block
+            let bbBlock: BoundingBox = {
+              minX: pos[0],
+              maxX: pos[0] + 1,
+              minY: pos[1],
+              maxY: pos[1] + 1,
+              minZ: pos[2],
+              maxZ: pos[2] + 1,
+            };
+            if (!intersectLeft && intersects(bbLeft, bbBlock)) {
+              intersectLeft = true;
+            }
+            if (!intersectRight && intersects(bbRight, bbBlock)) {
+              intersectRight = true;
+            }
+            if (!intersectUp && intersects(bbUp, bbBlock)) {
+              intersectUp = true;
+            }
+            if (!intersectDown && intersects(bbDown, bbBlock)) {
+              intersectDown = true;
+            }
+            if (!intersectBack && intersects(bbBack, bbBlock)) {
+              intersectBack = true;
+            }
+            if (!intersectFront && intersects(bbFront, bbBlock)) {
+              intersectFront = true;
             }
           }
         }
       }
-
-      if (permitted) {
-        e.pos = vec3_add(e.pos, this.wantGo);
-      }
-      this.wantGo = [0, 0, 0];
-    } else {
-      // fly mode
-      e.pos = vec3_add(e.pos, this.wantGo);
-      this.wantGo = [0, 0, 0];
     }
 
-    // left edge is Math.floor(x)
-    // right edge is Math.ceil(x)
+    return {
+      left: intersectLeft,
+      right: intersectRight,
+      up: intersectUp,
+      down: intersectDown,
+      back: intersectBack,
+      front: intersectFront,
+    };
+  }
+
+
+  applySystem = (e: Entity) => {
+    // fly mode
+    if (!this.physicsEnabled) {
+      e.pos = vec3_add(e.pos, this.wantGo);
+      this.wantGo = [0, 0, 0];
+      return;
+    }
+
+    // decrement up velocity due to gravity
+    this.upVel -= 0.001;
+
+    // find where we want to go, taking into account our upward velocity
+    this.wantGo = vec3_add(this.wantGo, vec3_scale(e.worldup, this.upVel));
+    let desiredLoc = vec3_add(e.pos, this.wantGo);
+
+    const intersection = this.calculatePlayerIntersection(desiredLoc);
+
+    // if we want to jump, and the player has their feet in the ground
+    if (this.wantJump && intersection.down) {
+        console.log("yeet");
+      this.upVel = 0.05;
+    }
+    this.wantJump = false;
+
+    // now adjust wantGo to avoid intersections
+    if(intersection.left) {
+        this.wantGo[0] = Math.max(this.wantGo[0], 0);
+    }
+    if(intersection.right) {
+        this.wantGo[0] = Math.min(this.wantGo[0], 0);
+    }
+    if(intersection.up) {
+        this.wantGo[1] = Math.max(this.wantGo[1], 0);
+        // cancel out upwards velocity
+        this.upVel = Math.min(this.upVel, 0);
+    }
+    if(intersection.down) {
+        this.wantGo[1] = Math.min(this.wantGo[1], 0);
+        // cancel out downwards velocity
+        this.upVel = Math.max(this.upVel, 0);
+    }
+    if(intersection.back) {
+        this.wantGo[2] = Math.max(this.wantGo[2], 0);
+    }
+    if(intersection.front) {
+        this.wantGo[2] = Math.min(this.wantGo[2], 0);
+    }
+
+    // set player location
+    e.pos = vec3_add(e.pos, this.wantGo);
+
+    this.wantGo = [0, 0, 0];
   };
 }
 
