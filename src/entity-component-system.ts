@@ -285,6 +285,8 @@ export class PhysicsComponent extends Component {
 
   applySystem = (e: Entity) => {
     let desiredLoc = vec3_add(e.pos, this.wantGo);
+    console.log('first')
+    console.log(this.wantGo)
     if (this.physicsEnabled) {
       // walk mode
 
@@ -305,7 +307,10 @@ export class PhysicsComponent extends Component {
         // permit movement only if none of them intersect
         for (let x = -2; x <= 2; x++) {
           for (let z = -2; z <= 2; z++) {
-            const pos = vec3_add(e.pos, [x, -2, z]).map(x => Math.floor(x)) as vec3;
+            const pos = vec3_add(e.pos, [0, 2, 0]).map(x => Math.floor(x)) as vec3;
+            console.log('here2');
+            console.log(e.pos)
+            console.log(pos)
             const block = this.world.getBlock(pos);
             if (block != null && this.world.blockManager.defs[block].pointable) {
               // create bounding box of block
@@ -318,6 +323,7 @@ export class PhysicsComponent extends Component {
                 maxZ: pos[2] + 1,
               };
               if (!intersects(bbPlayer, bbBlock)) {
+                console.log('intersects')
                 permitted = false;
               }
             } else if (block != null && !this.world.blockManager.defs[block].pointable) {
@@ -327,12 +333,47 @@ export class PhysicsComponent extends Component {
           }
         }
         if (permitted) {
-          this.upVel = 0.6;
-          this.wantGo = vec3_scale(e.worldup, this.upVel);
-          this.wantJump = false;
+          this.upVel = 1.5;
+          this.wantGo = vec3_add(this.wantGo, vec3_scale(e.worldup, this.upVel));
           //console.log(desiredLoc);
         }
+        this.wantJump = false;
       } else {
+        // apply gravity
+        // check if there is a box below the player
+        // go down by default if there is nothing below
+        for (let x = -2; x <= 2; x++) {
+          for (let y = 0; y <= 2; y++) {
+              for (let z = -2; z <= 2; z++) {
+              const pos = vec3_add(e.pos, [0, 2, 0]).map(x => Math.floor(x)) as vec3;
+              const block = this.world.getBlock(pos);
+              if (block != null && this.world.blockManager.defs[block].pointable) {
+                // create bounding box of block
+                //console.log('bound')
+                let bbBlock: BoundingBox = {
+                  minX: pos[0],
+                  maxX: pos[0] + 1,
+                  minY: pos[1],
+                  maxY: pos[1] + 1,
+                  minZ: pos[2],
+                  maxZ: pos[2] + 1,
+                };
+                if (intersects(bbPlayer, bbBlock)) {
+                  //console.log('reached')
+                  this.upVel = 0;
+                }
+              } else {
+                this.upVel = -0.2;
+              }
+            }
+          }
+        }
+        console.log('before')
+        console.log(this.wantGo)
+        this.wantGo = vec3_add(this.wantGo, vec3_scale(e.worldup, this.upVel));
+        console.log('after')
+        console.log(this.wantGo)
+
         // iterate through the 2 layers of blocks surrounding a player
         // permit movement only if none of them intersect
         for (let x = -2; x <= 2; x++) {
@@ -360,7 +401,7 @@ export class PhysicsComponent extends Component {
         }
       }
 
-      console.log(permitted);
+      console.log(this.wantGo);
       if (permitted) {
         e.pos = vec3_add(e.pos, this.wantGo);
       }
