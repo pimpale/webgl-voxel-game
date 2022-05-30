@@ -131,10 +131,10 @@ void main() {
     float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
 
     if(inRange && currentDepth <= depthMapDepth) {
-        float intensity = pow((1.0-currentDepth), 0.5);
+        float intensity = (1.0-currentDepth);
         vec3 lightDir = normalize(v_lightPosArr[i] - v_position);
         float diffuseIntensity = max(dot(v_normal, lightDir), 0.0);
-        lightSum += 2.0*diffuseIntensity*intensity;
+        lightSum += 5.0*diffuseIntensity*intensity;
     }
   }
   v_outColor = vec4(color.rgb*lightSum, color.a);
