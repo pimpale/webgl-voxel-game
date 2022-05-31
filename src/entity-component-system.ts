@@ -404,8 +404,9 @@ export class PhysicsComponent extends Component {
       return;
     }
 
-    // decrement up velocity due to gravity
+    // decrement up velocity due to gravity (while making sure it remains within reasonable limits)
     this.upVel -= 0.001;
+    this.upVel = clamp(this.upVel, -0.1, 0.1);
 
     // find where we want to go, taking into account our upward velocity
     this.wantGo = vec3_add(this.wantGo, vec3_scale(e.worldup, this.upVel));
@@ -415,7 +416,6 @@ export class PhysicsComponent extends Component {
 
     // if we want to jump, and the player has their feet in the ground
     if (this.wantJump && intersection.down) {
-        console.log("yeet");
       this.upVel = 0.05;
     }
     this.wantJump = false;

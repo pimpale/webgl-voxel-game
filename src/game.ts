@@ -35,13 +35,11 @@ class Game {
       [0, 0, 1],
       // camera rescales with canvas's aspect ratio
       this.canvas,
-      // give camera worldup
-      worldup
     );
 
     this.gl = canvas.getContext('webgl2')!
 
-    this.world = new World(5, this.camera.getPos(), worldup, this.gl, blockManager, this.camera);
+    this.world = new World(42, this.camera.getPos(), this.gl, blockManager, this.camera);
 
     // construct player
     const playerPhysics = new PhysicsComponent(this.world);
@@ -76,7 +74,7 @@ class Game {
     this.canvas.height = window.innerHeight;
   }
 
-  displayHelp = () => this.animationLoop();
+  start = () => this.animationLoop();
 
   updateTime = false;
 
@@ -90,7 +88,7 @@ class Game {
     if (this.updateTime) {
       this.world.update(this.camera.getPos());
     } else {
-      this.world.render(this.camera.getMvp());
+      this.world.render(this.camera.getMvp(worldup));
     }
     this.updateTime = !this.updateTime;
 

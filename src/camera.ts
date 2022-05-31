@@ -23,17 +23,15 @@ export class CameraBasis {
 // The camera is the logical camera for the game world
 // it doesn't actually move around, that's controlled by the player
 export class Camera {
-  private readonly worldup:vec3;
   private pos: vec3;
   private dir: vec3;
 
   private readonly canvas: HTMLCanvasElement;
 
-  constructor(loc: vec3, dir: vec3, canvas: HTMLCanvasElement, worldup:vec3) {
+  constructor(loc: vec3, dir: vec3, canvas: HTMLCanvasElement) {
     this.pos = loc;
     this.dir = dir;
     this.canvas = canvas;
-    this.worldup = worldup;
   }
 
   getPos = () => vec3_dup(this.pos);
@@ -42,13 +40,13 @@ export class Camera {
   getDir = () => vec3_dup(this.dir);
   setDir = (dir: vec3) => this.dir = vec3_dup(dir);
 
-  getMvp = () => {
+  getMvp = (worldup:vec3) => {
     const fov = RADIANS(90.0);
     const aspect_ratio = this.canvas.width / this.canvas.height;
     const projection = mat4_perspective(fov, aspect_ratio, 0.1, 100.0);
 
     // calculate the view matrix using our camera basis
-    const view = mat4_look_at(this.pos, vec3_add(this.pos, this.dir), this.worldup);
+    const view = mat4_look_at(this.pos, vec3_add(this.pos, this.dir), worldup);
 
     // compute final matrix
     return mat4_mul(projection, view);

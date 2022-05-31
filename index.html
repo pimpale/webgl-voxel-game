@@ -22,14 +22,9 @@
           width: 100%;
           height: 100%;
       }
-      #debugcanvas {
-          position: absolute;
-          left: 0px;
-          top: 0px;
-          z-index: 10;
-      }
       #blocktable {
           position: absolute;
+          background-color: rgba(255, 255, 255, 0.3);
           right: 0px;
           top: 0px;
           z-index: 10;
@@ -39,10 +34,10 @@
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <canvas id="canvas"></canvas>
-    <canvas id="debugcanvas"></canvas>
     <table id="blocktable">
         <thead>
             <tr>
+                <td></td>
                 <td>L</td>
                 <td>R</td>
                 <td>U</td>
@@ -53,6 +48,7 @@
         </thead>
         <tbody>
             <tr>
+                <th>Grass</th>
                 <td><img src="./assets/blocks/grass/left.png" id="grass-left"></td>
                 <td><img src="./assets/blocks/grass/right.png" id="grass-right"></td>
                 <td><img src="./assets/blocks/grass/up.png" id="grass-up"></td>
@@ -61,6 +57,7 @@
                 <td><img src="./assets/blocks/grass/back.png" id="grass-back"></td>
              </tr>
             <tr>
+                <th>Soil</th>
                 <td><img src="./assets/blocks/soil/left.png" id="soil-left"></td>
                 <td><img src="./assets/blocks/soil/right.png" id="soil-right"></td>
                 <td><img src="./assets/blocks/soil/up.png" id="soil-up"></td>
@@ -69,28 +66,40 @@
                 <td><img src="./assets/blocks/soil/back.png" id="soil-back"></td>
              </tr>
             <tr>
+                <th>Stone</th>
                 <td><img src="./assets/blocks/stone/left.png" id="stone-left"></td>
                 <td><img src="./assets/blocks/stone/right.png" id="stone-right"></td>
                 <td><img src="./assets/blocks/stone/up.png" id="stone-up"></td>
                 <td><img src="./assets/blocks/stone/down.png" id="stone-down"></td>
-                 <td><img src="./assets/blocks/stone/front.png" id="stone-front"></td>
+                <td><img src="./assets/blocks/stone/front.png" id="stone-front"></td>
                 <td><img src="./assets/blocks/stone/back.png" id="stone-back"></td>
              </tr>
              <tr>
+                <th>Glass</th>
                 <td><img src="./assets/blocks/glass/left.png" id="glass-left"></td>
                 <td><img src="./assets/blocks/glass/right.png" id="glass-right"></td>
-                 <td><img src="./assets/blocks/glass/up.png" id="glass-up"></td>
+                <td><img src="./assets/blocks/glass/up.png" id="glass-up"></td>
                 <td><img src="./assets/blocks/glass/down.png" id="glass-down"></td>
                 <td><img src="./assets/blocks/glass/front.png" id="glass-front"></td>
-                 <td><img src="./assets/blocks/glass/back.png" id="glass-back"></td>
+                <td><img src="./assets/blocks/glass/back.png" id="glass-back"></td>
              </tr>
             <tr>
-                 <td><img src="./assets/blocks/texturetest/left.png" id="light-left"></td>
-                <td><img src="./assets/blocks/texturetest/right.png" id="light-right"></td>
-                <td><img src="./assets/blocks/texturetest/up.png" id="light-up"></td>
-                 <td><img src="./assets/blocks/texturetest/down.png" id="light-down"></td>
-                <td><img src="./assets/blocks/texturetest/front.png" id="light-front"></td>
-                <td><img src="./assets/blocks/texturetest/back.png" id="light-back"></td>
+                <th>Lamp</th>
+                <td><img src="./assets/blocks/lamp/left.png" id="lamp-left"></td>
+                <td><img src="./assets/blocks/lamp/right.png" id="lamp-right"></td>
+                <td><img src="./assets/blocks/lamp/up.png" id="lamp-up"></td>
+                <td><img src="./assets/blocks/lamp/down.png" id="lamp-down"></td>
+                <td><img src="./assets/blocks/lamp/front.png" id="lamp-front"></td>
+                <td><img src="./assets/blocks/lamp/back.png" id="lamp-back"></td>
+              </tr>
+            <tr>
+                <th>Selector</th>
+                <td><img src="./assets/blocks/texturetest/left.png" id="selector-left"></td>
+                <td><img src="./assets/blocks/texturetest/right.png" id="selector-right"></td>
+                <td><img src="./assets/blocks/texturetest/up.png" id="selector-up"></td>
+                <td><img src="./assets/blocks/texturetest/down.png" id="selector-down"></td>
+                <td><img src="./assets/blocks/texturetest/front.png" id="selector-front"></td>
+                <td><img src="./assets/blocks/texturetest/back.png" id="selector-back"></td>
               </tr>
         </tbody>
     </table>

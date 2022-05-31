@@ -32,7 +32,8 @@ async function main() {
     { name: "soil", pointable: true, light: false, transparent: false, textures: await getImgs("soil"), },
     { name: "stone", pointable: true, light: false, transparent: false, textures: await getImgs("stone"), },
     { name: "glass", pointable: true, light: false, transparent: true, textures: await getImgs("glass"), },
-    { name: "light", pointable: true, light: true, transparent: false, textures: await getImgs("light"), },
+    { name: "lamp", pointable: true, light: true, transparent: false, textures: await getImgs("lamp"), },
+    { name: "selector", pointable: true, light: false, transparent: false, textures: await getImgs("selector"), },
   ]);
 
   // make game from canvas
@@ -40,7 +41,7 @@ async function main() {
   const game = new Game(canvas, blockManager);
 
   // start game
-  game.displayHelp();
+  game.start();
 }
 
 main();

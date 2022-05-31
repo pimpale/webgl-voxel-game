@@ -42,7 +42,7 @@ type ChunkLightingGPUData = {
 
 const SHADOWMAP_SIZE = 64;
 // max number of lights to render per chunk
-const LIGHTS_PER_CHUNK = 20;
+const LIGHTS_PER_CHUNK = 18;
 // there are 9 chunks surrounding us
 const N_LIGHTS = 9 * LIGHTS_PER_CHUNK;
 
@@ -127,7 +127,7 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    const float bias = 0.02;
+    const float bias = 0.017;
     float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
 
     if(inRange && currentDepth <= depthMapDepth) {
@@ -192,7 +192,6 @@ class World {
   private worldChunkCenterLoc: vec3;
 
   // worldgen function
-  private readonly worldup: vec3;
   private readonly seed: number;
   private readonly noiseFn: (x: number, y: number, z: number) => number;
 
@@ -214,11 +213,10 @@ class World {
     Math.floor(cameraLoc[2] / CHUNK_Z_SIZE),
   ] as vec3;
 
-  constructor(seed: number, cameraLoc: vec3, worldup: vec3, gl: WebGL2RenderingContext, blockManager: BlockManager, camera: Camera) {
+  constructor(seed: number, cameraLoc: vec3, gl: WebGL2RenderingContext, blockManager: BlockManager, camera: Camera) {
     this.gl = gl;
     this.blockManager = blockManager;
     this.seed = seed;
-    this.worldup = worldup;
     this.noiseFn = makeNoise3D(seed);
     this.worldChunkCenterLoc = this.getWorldChunkLoc(cameraLoc);
     this.chunk_map = new Map();
@@ -391,7 +389,7 @@ class World {
       this.deleteGraphics(highlight);
     }
     const graphics = this.createGraphics(writeMesh([{
-      bi: 5,
+      bi: 6,
       cubeLoc: ray.coords,
       face: ray.face,
     }]));
