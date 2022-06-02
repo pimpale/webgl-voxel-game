@@ -6,7 +6,9 @@ import { BlockManager } from './block';
 import { Camera } from './camera';
 import { Entity, PlayerControlComponent, CameraComponent, PhysicsComponent, BlockInteractionComponent } from './entity-component-system';
 
+// must be right hand coordinate system
 const worldup: vec3 = [0.0, -1.0, 0.0];
+const worldright: vec3 = [-1.0, 0.0, 0.0];
 
 class Game {
 
@@ -60,7 +62,7 @@ class Game {
       playerPhysics,
       // break blocks
       playerBlockInteraction,
-    ], worldup)
+    ], worldup, worldright)
 
     this.entityList = [player];
 
@@ -76,7 +78,6 @@ class Game {
 
   start = () => this.animationLoop();
 
-  updateTime = false;
 
   animationLoop = () => {
     // update all entities
@@ -84,13 +85,8 @@ class Game {
       entity.update();
     }
 
-    // update the world with the camera position
-    if (this.updateTime) {
-      this.world.update(this.camera.getPos());
-    } else {
-      this.world.render(this.camera.getMvp(worldup));
-    }
-    this.updateTime = !this.updateTime;
+    this.world.update(this.camera.getPos());
+    this.world.render(this.camera.getMvp(worldup));
 
     this.requestID = window.requestAnimationFrame(this.animationLoop);
   }

@@ -11,9 +11,9 @@ const CHUNK_MESH_COST = 1;
 const CHUNK_MKGRAPHICS_COST = 1;
 const CHUNK_RENDERLIGHT_COST = 1;
 
-const CHUNK_X_SIZE = 24;
-const CHUNK_Y_SIZE = 24;
-const CHUNK_Z_SIZE = 24;
+const CHUNK_X_SIZE = 16;
+const CHUNK_Y_SIZE = 16;
+const CHUNK_Z_SIZE = 16;
 
 
 // how many chunks to render
@@ -40,7 +40,7 @@ type ChunkLightingGPUData = {
   fbs: WebGLFramebuffer[],
 }
 
-const SHADOWMAP_SIZE = 64;
+const SHADOWMAP_SIZE = 128;
 // max number of lights to render per chunk
 const LIGHTS_PER_CHUNK = 18;
 // there are 9 chunks surrounding us
@@ -127,7 +127,7 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    const float bias = 0.017;
+    const float bias = 0.01;
     float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
 
     if(inRange && currentDepth <= depthMapDepth) {
@@ -750,8 +750,6 @@ class World {
       const y = Math.floor(mod(coords[1], CHUNK_Y_SIZE));
       const z = Math.floor(mod(coords[2], CHUNK_Z_SIZE));
 
-      console.log(x, y, z);
-
       chunk.blocks[chunkDataIndex(x, y, z)] = val;
 
       // means we need to recompute the mesh of this and neighboring chunks (if affected)
@@ -948,7 +946,7 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
     }
   }
 
-  blocks[chunkDataIndex(16, 16, 16)] = 5;
+  blocks[0] = 5;
 
   return blocks;
 }

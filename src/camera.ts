@@ -1,22 +1,40 @@
-import { RADIANS, vec3_dup, vec3_norm, vec3_cross, vec3_add, vec3, mat4, mat4_perspective, mat4_mul, mat4_look_at, } from './utils';
+import { RADIANS, vec3_dup, vec3_norm, vec3_cross, vec3_add, vec3, mat4, mat4_perspective, mat4_mul, mat4_look_at, mat4_axis_angle, mat4_vec_mul, vec4_extend_vec3, vec3_truncate_vec4, } from './utils';
 
 
 export class CameraBasis {
   readonly front: vec3;
   readonly right: vec3;
   readonly up: vec3;
-  constructor(pitch: number, yaw: number, worldup:vec3) {
 
-    // calculate front vector from yaw and pitch
-    this.front = vec3_norm([
-      Math.cos(yaw) * Math.cos(pitch),
-      Math.sin(pitch),
-      Math.sin(yaw) * Math.cos(pitch),
-    ]);
+  //  this.front = vec3_norm([
+  //    Math.cos(yaw) * Math.cos(pitch),
+  //    Math.sin(pitch),
+  //    Math.sin(yaw) * Math.cos(pitch),
+  //  ]);
+  //  // calculate others from via gram schmidt process
+  //  this.right = vec3_norm(vec3_cross(this.front, worldup));
+  //  this.up = vec3_norm(vec3_cross(this.right, this.front));
 
-    // calculate others from via gram schmidt process
-    this.right = vec3_norm(vec3_cross(this.front, worldup));
-    this.up = vec3_norm(vec3_cross(this.right, this.front));
+
+  constructor(pitch: number, yaw: number, worldup:vec3, worldright:vec3) {
+    // complete world basis
+    const worldup4 = vec4_extend_vec3(worldup, 0);
+    const worldright4= vec4_extend_vec3(worldright, 0);
+    const worldfront4 = vec4_extend_vec3(vec3_cross(worldup, worldright), 0);
+
+    // calculate yaw matrix
+    const yawmat = mat4_axis_angle(worldup, yaw);
+    // calculate pitch matrix using transformed worldright
+    const transformed_worldright = vec3_truncate_vec4(mat4_vec_mul(yawmat, worldright4));
+    const pitchmat = mat4_axis_angle(transformed_worldright, pitch);
+
+    // calculate combined rotation matrix
+    const rmat = mat4_mul(pitchmat, yawmat);
+
+    // transform the world basis vectors
+    this.right = vec3_truncate_vec4(mat4_vec_mul(rmat, worldright4));
+    this.up = vec3_truncate_vec4(mat4_vec_mul(rmat, worldup4));
+    this.front = vec3_truncate_vec4(mat4_vec_mul(rmat, worldfront4));
   }
 }
 

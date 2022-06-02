@@ -30,15 +30,16 @@ export class Entity {
   pos: vec3;
   // vector the entity is looking at
   dir: vec3;
-  // the up of this entity.
-  // Gravity should affect it this way
+  // coordinate system of entity
+  worldright: vec3;
   worldup: vec3;
 
   components: Component[]
 
-  constructor(components: Component[], worldup: vec3, pos?: vec3, dir?: vec3) {
+  constructor(components: Component[], worldup: vec3, worldright: vec3, pos?: vec3, dir?: vec3) {
     this.components = components;
     this.worldup = worldup;
+    this.worldright = worldright;
     this.pos = pos === undefined ? [0, 0, 0] : pos;
     this.dir = dir === undefined ? [1, 0, 0] : dir;
   }
@@ -61,7 +62,7 @@ export class PlayerControlComponent extends Component {
 
   // pitch and yaw values in radians
   private pitch: number = 0.0;
-  private yaw: number = RADIANS(-90.0);
+  private yaw: number = 0.0;
 
   private controlsEnabled: boolean = false;
   private fast: boolean = false;
@@ -114,7 +115,7 @@ export class PlayerControlComponent extends Component {
       const rotscale = 0.0015;
 
       this.yaw -= e.movementX * rotscale;
-      this.pitch -= e.movementY * rotscale;
+      this.pitch += e.movementY * rotscale;
 
       // clamp camera->pitch between +/-89 degrees
       this.pitch = clamp(this.pitch, RADIANS(-89.9), RADIANS(89.9));
@@ -139,7 +140,7 @@ export class PlayerControlComponent extends Component {
 
   applySystem = (e: Entity) => {
     // build basis vectors
-    const basis = new CameraBasis(this.pitch, this.yaw, e.worldup);
+    const basis = new CameraBasis(this.pitch, this.yaw, e.worldup, e.worldright);
     // the player basis is in the opposite direction as the direction the camera looks
     e.dir = vec3_scale(basis.front, -1);
 
@@ -354,6 +355,7 @@ export class PhysicsComponent extends Component {
           const block = this.world.getBlock(pos);
           if (block != null && this.world.blockManager.defs[block].pointable) {
             // create bounding box of block
+            // (TODO: make the bounding box in the player coordinates)
             let bbBlock: BoundingBox = {
               minX: pos[0],
               maxX: pos[0] + 1,

@@ -5,7 +5,7 @@ export function RADIANS(x: number) {
   return Math.PI * x / 180;
 }
 
-export function vec3_length(a:vec3): number {
+export function vec3_length(a: vec3): number {
   let sum = 0;
   for (const i of a) {
     sum += i * i;
@@ -19,8 +19,8 @@ export function vec3_norm(a: vec3): vec3 {
   return a.map(x => x / dist) as vec3;
 }
 
-export function vec3_dup([a1, a2, a3]: vec3): vec3{
-    return [a1, a2, a3]
+export function vec3_dup([a1, a2, a3]: vec3): vec3 {
+  return [a1, a2, a3]
 }
 
 export function vec3_dot([a1, a2, a3]: vec3, [b1, b2, b3]: vec3): number {
@@ -66,6 +66,7 @@ export function mat4_perspective(fov_y: number, aspect: number, near: number, fa
   ];
 }
 
+// from tiny graphics
 export function mat4_look_at(eye: vec3, at: vec3, up: vec3) {
   // look_at():  Produce a traditional graphics camera "lookat" matrix.
   // Each input must be a 3x1 Vector.
@@ -124,6 +125,43 @@ export function mat4_mul(a: mat4, b: mat4): mat4 {
   ];
 }
 
+export function vec4_extend_vec3(xyz:vec3, w:number):vec4 {
+    return [xyz[0], xyz[1], xyz[2], w]
+}
+
+export function vec3_truncate_vec4(xyzw:vec4):vec3 {
+    return [xyzw[0], xyzw[1], xyzw[2]]
+}
+
+export function mat4_vec_mul(a: mat4, v: vec4): vec4 {
+  const [a0, a1, a2, a3] = a;
+
+  return [
+    vec4_dot(a0, v),
+    vec4_dot(a1, v),
+    vec4_dot(a2, v),
+    vec4_dot(a3, v),
+  ];
+}
+
+// from tiny graphics
+export function mat4_axis_angle([x, y, z]: vec3, angle: number): mat4 {
+  // rotation(): Requires a scalar (angle) and a three-component axis vector.
+  const normalize = (x: number, y: number, z: number) => {
+    const n = Math.sqrt(x * x + y * y + z * z);
+    return [x / n, y / n, z / n]
+  }
+  let [i, j, k] = normalize(x, y, z),
+    [c, s] = [Math.cos(angle), Math.sin(angle)],
+    omc = 1.0 - c;
+  return [
+    [i * i * omc + c, i * j * omc - k * s, i * k * omc + j * s, 0],
+    [i * j * omc + k * s, j * j * omc + c, j * k * omc - i * s, 0],
+    [i * k * omc - j * s, j * k * omc + i * s, k * k * omc + c, 0],
+    [0, 0, 0, 1]
+  ];
+}
+
 export function mat4_to_uniform(m: mat4) {
   const [c0, c1, c2, c3] = mat4_transpose(m);
   return [...c0, ...c1, ...c2, ...c3];
@@ -149,12 +187,12 @@ export function mod(n: number, d: number) {
 }
 
 // takes in color as a hexadecimal number, returns a vec3 of color components
-export function convertColor(color: number) {
+export function convertColor(color: number):vec3 {
   return [
     (color >> 16) / 0xFF,
     ((color >> 8) & 0xFF) / 0xFF,
     (color & 0xFF) / 0xFF,
-  ] as vec3;
+  ]
 }
 
 
