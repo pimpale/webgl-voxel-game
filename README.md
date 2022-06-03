@@ -1,4 +1,4 @@
-How to run the code:
+## How to run the code:
 * npm install
 * npm run start
 * open localhost:3000
