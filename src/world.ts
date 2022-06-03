@@ -946,7 +946,7 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
     }
   }
 
-  blocks[0] = 5;
+  blocks[CHUNK_X_SIZE-2] = 5;
 
   return blocks;
 }
