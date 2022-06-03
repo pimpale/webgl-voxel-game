@@ -72,8 +72,8 @@ class Game {
   }
 
   resizeCanvas = () => {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
+    this.canvas.width = window.innerWidth/2;
+    this.canvas.height = window.innerHeight/2;
   }
 
   start = () => this.animationLoop();
