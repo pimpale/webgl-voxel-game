@@ -11,15 +11,21 @@ const CHUNK_MESH_COST = 1;
 const CHUNK_MKGRAPHICS_COST = 1;
 const CHUNK_RENDERLIGHT_COST = 1;
 
-const CHUNK_X_SIZE = 24;
-const CHUNK_Y_SIZE = 24;
-const CHUNK_Z_SIZE = 24;
+const CHUNK_X_SIZE = 32;
+const CHUNK_Y_SIZE = 32;
+const CHUNK_Z_SIZE = 32;
 
 
-// how many chunks to render
-const RENDER_RADIUS_X = 2;
-const RENDER_RADIUS_Y = 2;
-const RENDER_RADIUS_Z = 2;
+// if a loaded chunk is farther than the player than this, we unload it
+const MAX_RENDER_RADIUS_X = 3;
+const MAX_RENDER_RADIUS_Y = 3;
+const MAX_RENDER_RADIUS_Z = 3;
+
+// if an unloaded chunk is closer than this, then we load it
+const MIN_RENDER_RADIUS_X = 2;
+const MIN_RENDER_RADIUS_Y = 2;
+const MIN_RENDER_RADIUS_Z = 2;
+
 
 type Graphics = {
   vao: WebGLVertexArrayObject;
@@ -46,9 +52,9 @@ type ChunkLightingGPUData = {
   lightDataTexArr: WebGLTexture,
 }
 
-const SHADOWMAP_SIZE = 128;
+const SHADOWMAP_SIZE = 96;
 // max number of lights to render per chunk
-const LIGHTS_PER_CHUNK = 18;
+const LIGHTS_PER_CHUNK = 24;
 // there are 9 chunks surrounding us
 const N_LIGHTS = 9 * LIGHTS_PER_CHUNK;
 
@@ -106,7 +112,7 @@ out vec4 v_outColor;
 void main() {
   vec4 color = texture(u_textureAtlas, v_tuv);
 
-  float lightSum = 0.3;
+  float lightSum = 0.4;
 
   for(int i = 0; i < u_lightNumber; i++) {
     // get light position from texture
@@ -132,7 +138,7 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    const float bias = 0.01;
+    const float bias = 0.012;
     float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
 
     if(inRange && currentDepth <= depthMapDepth) {
@@ -277,7 +283,7 @@ class World {
 
     // create data SUPER EXPENSIVE
     this.freeChunkLightingGPUData = [];
-    for (let i = 0; i < (RENDER_RADIUS_X * 2 + 1) * (RENDER_RADIUS_Y * 2 + 1) * (RENDER_RADIUS_Z * 2 + 1); i++) {
+    for (let i = 0; i < (MAX_RENDER_RADIUS_X * 2 + 1) * (MAX_RENDER_RADIUS_Y * 2 + 1) * (MAX_RENDER_RADIUS_Z * 2 + 1); i++) {
       this.freeChunkLightingGPUData.push(createChunkLightingGPUData(this.gl));
     }
 
@@ -341,15 +347,24 @@ class World {
 
   private shouldBeLoaded = (worldChunkCoords: vec3) => {
     const disp = vec3_sub(worldChunkCoords, this.worldChunkCenterLoc);
-    return (disp[0] >= -RENDER_RADIUS_X && disp[0] <= RENDER_RADIUS_X) &&
-      (disp[1] >= -RENDER_RADIUS_Y && disp[1] <= RENDER_RADIUS_Y) &&
-      (disp[2] >= -RENDER_RADIUS_Z && disp[2] <= RENDER_RADIUS_Z);
+    return (disp[0] >= -MIN_RENDER_RADIUS_X && disp[0] <= MIN_RENDER_RADIUS_X) &&
+      (disp[1] >= -MIN_RENDER_RADIUS_Y && disp[1] <= MIN_RENDER_RADIUS_Y) &&
+      (disp[2] >= -MIN_RENDER_RADIUS_Z && disp[2] <= MIN_RENDER_RADIUS_Z);
   }
+
+  private shouldBeUnloaded = (worldChunkCoords: vec3) => {
+    const disp = vec3_sub(worldChunkCoords, this.worldChunkCenterLoc);
+    return !((disp[0] >= -MAX_RENDER_RADIUS_X && disp[0] <= MAX_RENDER_RADIUS_X) &&
+      (disp[1] >= -MAX_RENDER_RADIUS_Y && disp[1] <= MAX_RENDER_RADIUS_Y) &&
+      (disp[2] >= -MAX_RENDER_RADIUS_Z && disp[2] <= MAX_RENDER_RADIUS_Z));
+  }
+
+
   // if the camera new chunk coords misalign with our current chunk coords then
   private updateCameraLoc = () => {
     // delete any generated chunks
     for (const [coord, chunk] of this.chunk_map) {
-      if (!this.shouldBeLoaded(JSON.parse(coord))) {
+      if (this.shouldBeUnloaded(JSON.parse(coord))) {
         if (chunk.graphics !== undefined) {
           this.deleteChunkGraphics(chunk.graphics);
         }
@@ -361,31 +376,34 @@ class World {
     }
 
     // create list of all locs that should be rendered
-    const toLoad: vec3[] = []
-    for (let x = -RENDER_RADIUS_X; x <= RENDER_RADIUS_X; x++) {
-      for (let y = -RENDER_RADIUS_Y; y <= RENDER_RADIUS_Y; y++) {
-        for (let z = -RENDER_RADIUS_Z; z <= RENDER_RADIUS_Z; z++) {
-          toLoad.push(vec3_add(this.worldChunkCenterLoc, [x, y, z]));
+    for (let x = -MIN_RENDER_RADIUS_X; x <= MIN_RENDER_RADIUS_X; x++) {
+      for (let y = -MIN_RENDER_RADIUS_Y; y <= MIN_RENDER_RADIUS_Y; y++) {
+        for (let z = -MIN_RENDER_RADIUS_Z; z <= MIN_RENDER_RADIUS_Z; z++) {
+          const strCoord = JSON.stringify(vec3_add(this.worldChunkCenterLoc, [x, y, z]));
+          const chunk = this.chunk_map.get(strCoord);
+          if (chunk === undefined) {
+            this.chunk_map.set(strCoord, {})
+          }
         }
       }
     }
 
-    // sort by closest to us
-    toLoad.sort((a, b) => {
-      const a_d = vec3_length(vec3_sub(a, this.worldChunkCenterLoc));
-      const b_d = vec3_length(vec3_sub(b, this.worldChunkCenterLoc));
+    // sort by closest to us and set
+    const sortedCoords = Array.from(this.chunk_map.keys(), coord => JSON.parse(coord))
+      .sort((a, b) => {
+        const a_d = vec3_length(vec3_sub(a, this.worldChunkCenterLoc));
+        const b_d = vec3_length(vec3_sub(b, this.worldChunkCenterLoc));
 
-      return a_d - b_d;
-    });
+        return a_d - b_d;
+      });
 
-    // initialize if not exists
-    for (const coord of toLoad) {
-      const strCoord = JSON.stringify(coord);
-      const chunk = this.chunk_map.get(strCoord);
-      if (chunk === undefined) {
-        this.chunk_map.set(strCoord, {})
-      }
+    const new_map = new Map<string, Chunk>();
+    for(const coord of sortedCoords) {
+        const strCoord =JSON.stringify(coord);
+        new_map.set(strCoord, this.chunk_map.get(strCoord)!);
     }
+
+    this.chunk_map = new_map;
   }
 
   addHighlight = (id: string, ray: Highlight) => {
