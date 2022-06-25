@@ -42,22 +42,11 @@ type Chunk = {
 
 // these should not get deleted! they merely transfer ownership (to avoid the massive costs of creation/deletion)
 type ChunkLightingGPUData = {
-  // Texture array containing an array of all the light shadow maps
-  shadowTexArr: WebGLTexture,
-  // array of fbs, one for each texture in the texture array
-  shadowFbs: WebGLFramebuffer[],
-  // texture array that's packed with data per light
-  // each texture is 5x1, first pixel contains light location (rgb)
-  // next 4 pixels represent the columns of the light matrix (rgba),
-  lightDataTexArr: WebGLTexture,
 }
 
 const SHADOWMAP_SIZE = 256;
 // max number of lights to render per chunk
 const LIGHTS_PER_CHUNK = 6;
-// there are 9 chunks surrounding us
-const N_LIGHTS = 27 * LIGHTS_PER_CHUNK;
-
 
 const vs = `#version 300 es
 precision highp int;
@@ -90,13 +79,9 @@ precision highp sampler2DArray;
 // the texture atlas for the blocks
 uniform sampler2DArray u_textureAtlas;
 
-uniform int u_lightNumber;
-
-// the light depth maps array
-uniform sampler2DArray u_lightDepthArr;
-
-// the light data array
-uniform sampler2DArray u_lightDataArr;
+uniform int u_lightNumber0;
+uniform sampler2DArray u_lightDepthArr0;
+uniform sampler2DArray u_lightDataArr0;
 
 // position
 in vec3 v_position;
@@ -142,7 +127,7 @@ void main() {
     float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
 
     if(inRange && currentDepth <= depthMapDepth) {
-        float intensity = sqrt(1.0-currentDepth);
+        float intensity = 1.0-currentDepth;
         vec3 lightDir = normalize(lightPos - v_position);
         float diffuseIntensity = max(dot(v_normal, lightDir), 0.0);
         lightSum += 7.0*diffuseIntensity*intensity;
@@ -183,8 +168,16 @@ class World {
   private readonly NORMAL_LOC = 1;
   private readonly TUV_LOC = 2;
 
-
   private textureAtlas: WebGLTexture;
+
+  // Texture array containing an array of all the light shadow maps
+  private shadowTexArr: WebGLTexture;
+  // array of fbs, one for each texture in the texture array
+  private shadowFbs: WebGLFramebuffer[];
+  // texture array that's packed with data per light
+  // each texture is 5x1, first pixel contains light location (rgb)
+  // next 4 pixels represent the columns of the light matrix (rgba),
+  private lightDataTexArr: WebGLTexture;
 
   private renderProgram: WebGLProgram;
   private renderMvpMatLoc: WebGLUniformLocation;
@@ -282,9 +275,61 @@ class World {
     this.shadowMvpMatLoc = this.gl.getUniformLocation(this.shadowProgram, "u_mvpMat")!;
 
     // create data SUPER EXPENSIVE
-    this.freeChunkLightingGPUData = [];
-    for (let i = 0; i < (MAX_RENDER_RADIUS_X * 2 + 1) * (MAX_RENDER_RADIUS_Y * 2 + 1) * (MAX_RENDER_RADIUS_Z * 2 + 1); i++) {
-      this.freeChunkLightingGPUData.push(createChunkLightingGPUData(this.gl));
+    {
+      this.lightDataTexArr = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, lightDataTexArr);
+      gl.texImage3D(
+        gl.TEXTURE_2D_ARRAY,      // target
+        0,                    // mip level
+        gl.RGBA32F, // internal format
+        5,   // width
+        1,   // height
+        N_LIGHTS,         // depth
+        0,                  // border
+        gl.RGBA, // format
+        gl.FLOAT,           // type
+        null,              // data
+      );
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+
+      const shadowTexArr = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, shadowTexArr);
+      gl.texImage3D(
+        gl.TEXTURE_2D_ARRAY,      // target
+        0,                    // mip level
+        gl.DEPTH_COMPONENT16, // internal format
+        SHADOWMAP_SIZE,   // width
+        SHADOWMAP_SIZE,   // height
+        N_LIGHTS,   // depth
+        0,                  // border
+        gl.DEPTH_COMPONENT, // format
+        gl.UNSIGNED_SHORT,           // type
+        null,              // data
+      );
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      const shadowFbs: WebGLFramebuffer[] = []
+
+      for (let i = 0; i < N_LIGHTS; i++) {
+        const depthFramebuffer = gl.createFramebuffer()!;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, depthFramebuffer);
+        gl.framebufferTextureLayer(
+          gl.FRAMEBUFFER,       // target
+          gl.DEPTH_ATTACHMENT,  // attachment point
+          shadowTexArr,              // texture
+          0,                         // mip level
+          i,                         // layer
+        );
+        shadowFbs.push(depthFramebuffer);
+      }
+
     }
 
     this.updateCameraLoc();
@@ -398,9 +443,9 @@ class World {
       });
 
     const new_map = new Map<string, Chunk>();
-    for(const coord of sortedCoords) {
-        const strCoord =JSON.stringify(coord);
-        new_map.set(strCoord, this.chunk_map.get(strCoord)!);
+    for (const coord of sortedCoords) {
+      const strCoord = JSON.stringify(coord);
+      new_map.set(strCoord, this.chunk_map.get(strCoord)!);
     }
 
     this.chunk_map = new_map;
@@ -647,6 +692,7 @@ class World {
           .flatMap(coord => {
             const chunk = this.chunk_map.get(coord);
             if (chunk && chunk.mesh) {
+
               return chunk.mesh.lights.slice(0, LIGHTS_PER_CHUNK);
             } else {
               return [];
@@ -988,7 +1034,7 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
     }
   }
 
-  blocks[CHUNK_X_SIZE - 2] = 5;
+  //blocks[CHUNK_X_SIZE - 2] = 5;
 
   return blocks;
 }
@@ -1220,61 +1266,6 @@ function writeMesh(faces: BlockFace[]): Float32Array {
 }
 
 const createChunkLightingGPUData = (gl: WebGL2RenderingContext): ChunkLightingGPUData => {
-  const lightDataTexArr = gl.createTexture()!;
-  gl.bindTexture(gl.TEXTURE_2D_ARRAY, lightDataTexArr);
-  gl.texImage3D(
-    gl.TEXTURE_2D_ARRAY,      // target
-    0,                    // mip level
-    gl.RGBA32F, // internal format
-    5,   // width
-    1,   // height
-    N_LIGHTS,         // depth
-    0,                  // border
-    gl.RGBA, // format
-    gl.FLOAT,           // type
-    null,              // data
-  );
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-
-  const shadowTexArr = gl.createTexture()!;
-  gl.bindTexture(gl.TEXTURE_2D_ARRAY, shadowTexArr);
-  gl.texImage3D(
-    gl.TEXTURE_2D_ARRAY,      // target
-    0,                    // mip level
-    gl.DEPTH_COMPONENT16, // internal format
-    SHADOWMAP_SIZE,   // width
-    SHADOWMAP_SIZE,   // height
-    N_LIGHTS,   // depth
-    0,                  // border
-    gl.DEPTH_COMPONENT, // format
-    gl.UNSIGNED_SHORT,           // type
-    null,              // data
-  );
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-  const shadowFbs: WebGLFramebuffer[] = []
-
-  for (let i = 0; i < N_LIGHTS; i++) {
-    const depthFramebuffer = gl.createFramebuffer()!;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, depthFramebuffer);
-    gl.framebufferTextureLayer(
-      gl.FRAMEBUFFER,       // target
-      gl.DEPTH_ATTACHMENT,  // attachment point
-      shadowTexArr,              // texture
-      0,                         // mip level
-      i,                         // layer
-    );
-    shadowFbs.push(depthFramebuffer);
-  }
-
-  return { shadowTexArr, shadowFbs, lightDataTexArr, };
 }
 
 
