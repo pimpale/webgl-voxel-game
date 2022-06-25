@@ -17,14 +17,14 @@ const CHUNK_Z_SIZE = 32;
 
 
 // if a loaded chunk is farther than the player than this, we unload it
-const MAX_RENDER_RADIUS_X = 3;
-const MAX_RENDER_RADIUS_Y = 3;
-const MAX_RENDER_RADIUS_Z = 3;
+const MAX_RENDER_RADIUS_X = 2;
+const MAX_RENDER_RADIUS_Y = 2;
+const MAX_RENDER_RADIUS_Z = 2;
 
 // if an unloaded chunk is closer than this, then we load it
-const MIN_RENDER_RADIUS_X = 2;
-const MIN_RENDER_RADIUS_Y = 2;
-const MIN_RENDER_RADIUS_Z = 2;
+const MIN_RENDER_RADIUS_X = 1;
+const MIN_RENDER_RADIUS_Y = 1;
+const MIN_RENDER_RADIUS_Z = 1;
 
 
 type Graphics = {
@@ -52,11 +52,11 @@ type ChunkLightingGPUData = {
   lightDataTexArr: WebGLTexture,
 }
 
-const SHADOWMAP_SIZE = 96;
+const SHADOWMAP_SIZE = 256;
 // max number of lights to render per chunk
-const LIGHTS_PER_CHUNK = 24;
+const LIGHTS_PER_CHUNK = 6;
 // there are 9 chunks surrounding us
-const N_LIGHTS = 9 * LIGHTS_PER_CHUNK;
+const N_LIGHTS = 27 * LIGHTS_PER_CHUNK;
 
 
 const vs = `#version 300 es
@@ -112,7 +112,7 @@ out vec4 v_outColor;
 void main() {
   vec4 color = texture(u_textureAtlas, v_tuv);
 
-  float lightSum = 0.4;
+  float lightSum = 0.2;
 
   for(int i = 0; i < u_lightNumber; i++) {
     // get light position from texture
@@ -138,11 +138,11 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    const float bias = 0.012;
+    const float bias = 0.005;
     float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
 
     if(inRange && currentDepth <= depthMapDepth) {
-        float intensity = (1.0-currentDepth);
+        float intensity = sqrt(1.0-currentDepth);
         vec3 lightDir = normalize(lightPos - v_position);
         float diffuseIntensity = max(dot(v_normal, lightDir), 0.0);
         lightSum += 7.0*diffuseIntensity*intensity;
@@ -652,13 +652,9 @@ class World {
               return [];
             }
           })
-          // limit to n_lights at max
-          .slice(0, N_LIGHTS)
           // create light data for each one
           .map(this.createLightData)
           ;
-
-        //console.log(lightData);
 
         // update data
         if (chunk.lights === undefined) {
@@ -1249,13 +1245,13 @@ const createChunkLightingGPUData = (gl: WebGL2RenderingContext): ChunkLightingGP
   gl.texImage3D(
     gl.TEXTURE_2D_ARRAY,      // target
     0,                    // mip level
-    gl.DEPTH_COMPONENT32F, // internal format
+    gl.DEPTH_COMPONENT16, // internal format
     SHADOWMAP_SIZE,   // width
     SHADOWMAP_SIZE,   // height
     N_LIGHTS,   // depth
     0,                  // border
     gl.DEPTH_COMPONENT, // format
-    gl.FLOAT,           // type
+    gl.UNSIGNED_SHORT,           // type
     null,              // data
   );
   gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);

@@ -5,12 +5,8 @@ export function RADIANS(x: number) {
   return Math.PI * x / 180;
 }
 
-export function vec3_length(a: vec3): number {
-  let sum = 0;
-  for (const i of a) {
-    sum += i * i;
-  }
-  return Math.sqrt(sum);
+export function vec3_length([a1, a2, a3]: vec3): number {
+  return Math.hypot(a1, a2, a3);
 }
 
 // normalizes a vector in place
