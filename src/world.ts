@@ -10,6 +10,7 @@ const CHUNK_GEN_COST = 1;
 const CHUNK_MESH_COST = 1;
 const CHUNK_MKGRAPHICS_COST = 1;
 const CHUNK_RENDERLIGHT_COST = 1;
+const CHUNK_LIGHTINDEX_COST = 1;
 
 const CHUNK_X_SIZE = 32;
 const CHUNK_Y_SIZE = 32;
@@ -34,19 +35,31 @@ type Graphics = {
 }
 
 type Chunk = {
+  chunkNumber: number,
   blocks?: Uint16Array,
   mesh?: { stale: boolean, solid: BlockFace[], transparent: BlockFace[], lights: BlockFace[] }
   graphics?: { stale: boolean, solid: Graphics, transparent: Graphics }
-  lights?: { stale: boolean, data: ChunkLightingGPUData, nLights: number }
+  ownLights?: { stale: boolean, lightData: [vec3, mat4][] }
+  completeLighting?: { stale: boolean, data: ChunkLightingGPUData }
 }
 
 // these should not get deleted! they merely transfer ownership (to avoid the massive costs of creation/deletion)
 type ChunkLightingGPUData = {
+  // 27x1 texture,
+  // r channel = start index,
+  // g channel = end index,
+  // b channel = whether entry is valid or not
+  lightIndexesTex: WebGLTexture,
 }
 
 const SHADOWMAP_SIZE = 256;
 // max number of lights to render per chunk
-const LIGHTS_PER_CHUNK = 6;
+const LIGHTS_PER_CHUNK = 12;
+
+const N_CHUNKS = (MAX_RENDER_RADIUS_X * 2 + 1) * (MAX_RENDER_RADIUS_Y * 2 + 1) * (MAX_RENDER_RADIUS_Z * 2 + 1);
+
+// the total number of lights
+const N_LIGHTS = LIGHTS_PER_CHUNK * N_CHUNKS;
 
 const vs = `#version 300 es
 precision highp int;
@@ -74,14 +87,19 @@ void main() {
 const fs = `#version 300 es
 precision highp int;
 precision highp float;
+precision highp isampler2D;
 precision highp sampler2DArray;
 
 // the texture atlas for the blocks
 uniform sampler2DArray u_textureAtlas;
 
-uniform int u_lightNumber0;
-uniform sampler2DArray u_lightDepthArr0;
-uniform sampler2DArray u_lightDataArr0;
+// Shared between all chunks
+uniform sampler2DArray u_lightDepthArr;
+uniform sampler2DArray u_lightDataArr;
+
+// specific to the chunk.
+// Contains 27 entries of start indexes and lengths
+uniform isampler2D u_lightIndexes;
 
 // position
 in vec3 v_position;
@@ -98,41 +116,49 @@ void main() {
   vec4 color = texture(u_textureAtlas, v_tuv);
 
   float lightSum = 0.2;
+  for(int c = 0; c < 27; c++) {
+    ivec3 lightIndexData = texelFetch(u_lightIndexes, ivec2(c, 0), 0).xyz;
+    // if marked empty, skip chunk
+    if(lightIndexData.z == 0) {
+        continue;
+    }
 
-  for(int i = 0; i < u_lightNumber; i++) {
-    // get light position from texture
-    vec3 lightPos = texelFetch(u_lightDataArr, ivec3(0, 0, i), 0).rgb;
-    mat4 lightMvp = mat4(
-        texelFetch(u_lightDataArr, ivec3(1, 0, i), 0),
-        texelFetch(u_lightDataArr, ivec3(2, 0, i), 0),
-        texelFetch(u_lightDataArr, ivec3(3, 0, i), 0),
-        texelFetch(u_lightDataArr, ivec3(4, 0, i), 0)
-    );
-    vec4 lightSpacePosition = lightMvp * vec4(v_position, 1.0);
+    for(int i = lightIndexData.x; i < lightIndexData.y; i++) {
+      // get light position from texture
+      vec3 lightPos = texelFetch(u_lightDataArr, ivec3(0, 0, i), 0).rgb;
+      mat4 lightMvp = mat4(
+          texelFetch(u_lightDataArr, ivec3(1, 0, i), 0),
+          texelFetch(u_lightDataArr, ivec3(2, 0, i), 0),
+          texelFetch(u_lightDataArr, ivec3(3, 0, i), 0),
+          texelFetch(u_lightDataArr, ivec3(4, 0, i), 0)
+      );
+      vec4 lightSpacePosition = lightMvp * vec4(v_position, 1.0);
 
-    vec3 projectedCoord = lightSpacePosition.xyz / lightSpacePosition.w;
-    bool inRange =
-        projectedCoord.z >= -1.0 &&
-        projectedCoord.z <= 1.0 &&
-        projectedCoord.x >= -1.0 &&
-        projectedCoord.x <= 1.0 &&
-        projectedCoord.y >= -1.0 &&
-        projectedCoord.y <= 1.0;
+      vec3 projectedCoord = lightSpacePosition.xyz / lightSpacePosition.w;
+      bool inRange =
+          projectedCoord.z >= -1.0 &&
+          projectedCoord.z <= 1.0 &&
+          projectedCoord.x >= -1.0 &&
+          projectedCoord.x <= 1.0 &&
+          projectedCoord.y >= -1.0 &&
+          projectedCoord.y <= 1.0;
 
-    // remap coords to texCoords
-    vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
+      // remap coords to texCoords
+      vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
-    float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    const float bias = 0.005;
-    float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
+      float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
+      const float bias = 0.005;
+      float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
 
-    if(inRange && currentDepth <= depthMapDepth) {
-        float intensity = 1.0-currentDepth;
-        vec3 lightDir = normalize(lightPos - v_position);
-        float diffuseIntensity = max(dot(v_normal, lightDir), 0.0);
-        lightSum += 7.0*diffuseIntensity*intensity;
+      if(inRange && currentDepth <= depthMapDepth) {
+          float intensity = 1.0-currentDepth;
+          vec3 lightDir = normalize(lightPos - v_position);
+          float diffuseIntensity = max(dot(v_normal, lightDir), 0.0);
+          lightSum += 7.0*diffuseIntensity*intensity;
+      }
     }
   }
+
   v_outColor = vec4(color.rgb*lightSum, color.a);
 }
 `;
@@ -149,7 +175,6 @@ void main() {
 
 const shadow_fs = `#version 300 es
 precision highp float;
-precision highp sampler2DArray;
 in vec3 v_tuv;
 out vec4 v_outColor;
 
@@ -182,9 +207,9 @@ class World {
   private renderProgram: WebGLProgram;
   private renderMvpMatLoc: WebGLUniformLocation;
   private renderTextureAtlasLoc: WebGLUniformLocation;
-  private renderLightNumber: WebGLUniformLocation;
-  private renderLightDepthArr: WebGLUniformLocation;
-  private renderLightDataArr: WebGLUniformLocation;
+  private renderLightDepthArrLoc: WebGLUniformLocation;
+  private renderLightDataArrLoc: WebGLUniformLocation;
+  private renderLightIndexesLoc: WebGLUniformLocation;
 
   private shadowProgram: WebGLProgram;
   private shadowMvpMatLoc: WebGLUniformLocation;
@@ -199,6 +224,9 @@ class World {
 
   // list of active <id, highlight> pairs
   private highlights: Map<string, Graphics>;
+
+  // list storing free chunk numbers (put here after a chunk is deleted)
+  private freeChunkNumbers: number[];
 
   // list storing free ChunkLightingGPUData (put here after a chunk is deleted)
   private freeChunkLightingGPUData: ChunkLightingGPUData[];
@@ -224,6 +252,15 @@ class World {
     this.chunk_map = new Map();
     this.highlights = new Map();
 
+    // create pool of free chunk numbers
+    this.freeChunkNumbers = [];
+    for (let i = 0; i < N_CHUNKS; i++) {
+      this.freeChunkNumbers.push(i);
+    }
+
+    // create texture atlas
+    this.textureAtlas = this.blockManager.buildTextureAtlas(this.gl);
+
     this.renderProgram = createProgram(
       this.gl,
       [
@@ -240,25 +277,21 @@ class World {
     // set this program as current
     this.gl.useProgram(this.renderProgram);
 
-    console.log(this.gl.getParameter(this.gl.MAX_VARYING_VECTORS));
-
     // retrieve uniforms
     this.renderMvpMatLoc = this.gl.getUniformLocation(this.renderProgram, "u_mvpMat")!;
     this.renderTextureAtlasLoc = this.gl.getUniformLocation(this.renderProgram, "u_textureAtlas")!;
-    this.renderLightNumber = this.gl.getUniformLocation(this.renderProgram, "u_lightNumber")!;
-    this.renderLightDepthArr = this.gl.getUniformLocation(this.renderProgram, "u_lightDepthArr")!;
-    this.renderLightDataArr = this.gl.getUniformLocation(this.renderProgram, "u_lightDataArr")!;
+    this.renderLightDepthArrLoc = this.gl.getUniformLocation(this.renderProgram, "u_lightDepthArr")!;
+    this.renderLightDataArrLoc = this.gl.getUniformLocation(this.renderProgram, "u_lightDataArr")!;
+    this.renderLightIndexesLoc = this.gl.getUniformLocation(this.renderProgram, "u_lightIndexes")!;
 
-    // set texture 0 as current
-    this.gl.activeTexture(this.gl.TEXTURE0);
-    // create texture atlas at texture 0
-    this.textureAtlas = this.blockManager.buildTextureAtlas(this.gl);
     // Tell the shader to get the textureAtlas texture from texture unit 0
     this.gl.uniform1i(this.renderTextureAtlasLoc, 0);
     // tell the shader to get its light depth textures from texutre unit 1
-    this.gl.uniform1i(this.renderLightDepthArr, 1);
+    this.gl.uniform1i(this.renderLightDepthArrLoc, 1);
     // tell the shader to get its textures from this from texture unit 2
-    this.gl.uniform1i(this.renderLightDataArr, 2);
+    this.gl.uniform1i(this.renderLightDataArrLoc, 2);
+    // tell the shader to get its textures from this from texture unit 3
+    this.gl.uniform1i(this.renderLightIndexesLoc, 3);
 
     // create program
     this.shadowProgram = createProgram(
@@ -274,10 +307,36 @@ class World {
     this.gl.useProgram(this.shadowProgram);
     this.shadowMvpMatLoc = this.gl.getUniformLocation(this.shadowProgram, "u_mvpMat")!;
 
-    // create data SUPER EXPENSIVE
+    // create global shadow data SUPER EXPENSIVE
     {
+      // give each chunk a number and a index texture
+      this.freeChunkLightingGPUData = []
+      for (let i = 0; i < N_CHUNKS; i++) {
+        const tex = gl.createTexture()!;
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); // see https://webglfundamentals.org/webgl/lessons/webgl-data-textures.html
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,                 // mip level
+          gl.RGB32I,          // internal format
+          27, // width
+          1, //height
+          0,                // border
+          gl.RGB_INTEGER,   // format
+          gl.INT,  // type
+          null
+        );
+
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+        this.freeChunkLightingGPUData.push({
+          lightIndexesTex: tex
+        });
+      }
+
       this.lightDataTexArr = gl.createTexture()!;
-      gl.bindTexture(gl.TEXTURE_2D_ARRAY, lightDataTexArr);
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.lightDataTexArr);
       gl.texImage3D(
         gl.TEXTURE_2D_ARRAY,      // target
         0,                    // mip level
@@ -290,14 +349,15 @@ class World {
         gl.FLOAT,           // type
         null,              // data
       );
+
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
 
-      const shadowTexArr = gl.createTexture()!;
-      gl.bindTexture(gl.TEXTURE_2D_ARRAY, shadowTexArr);
+      this.shadowTexArr = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.shadowTexArr);
       gl.texImage3D(
         gl.TEXTURE_2D_ARRAY,      // target
         0,                    // mip level
@@ -310,26 +370,25 @@ class World {
         gl.UNSIGNED_SHORT,           // type
         null,              // data
       );
+
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-      const shadowFbs: WebGLFramebuffer[] = []
-
+      this.shadowFbs = []
       for (let i = 0; i < N_LIGHTS; i++) {
         const depthFramebuffer = gl.createFramebuffer()!;
         gl.bindFramebuffer(gl.FRAMEBUFFER, depthFramebuffer);
         gl.framebufferTextureLayer(
           gl.FRAMEBUFFER,       // target
           gl.DEPTH_ATTACHMENT,  // attachment point
-          shadowTexArr,              // texture
+          this.shadowTexArr,              // texture
           0,                         // mip level
           i,                         // layer
         );
-        shadowFbs.push(depthFramebuffer);
+        this.shadowFbs.push(depthFramebuffer);
       }
-
     }
 
     this.updateCameraLoc();
@@ -404,19 +463,33 @@ class World {
       (disp[2] >= -MAX_RENDER_RADIUS_Z && disp[2] <= MAX_RENDER_RADIUS_Z));
   }
 
+  private unloadChunk = (coord: string) => {
+    const chunk = this.chunk_map.get(coord)!;
+    this.freeChunkNumbers.push(chunk.chunkNumber);
+    if (chunk.graphics !== undefined) {
+      this.deleteChunkGraphics(chunk.graphics);
+    }
+    if (chunk.completeLighting !== undefined) {
+      this.freeChunkLightingGPUData.push(chunk.completeLighting.data);
+    }
+    // if it had its own lights, then we need to mark all neighboring chunk completeLighting stale
+    // Note, we don't need to mark the mesh or lighting stale because we assume that the chunk is being replaced by empty air
+    for (const c of this.adjacentChunkLocs(JSON.parse(coord))) {
+      const chunk = this.chunk_map.get(JSON.stringify(c));
+      if (chunk?.completeLighting !== undefined) {
+        chunk.completeLighting.stale = true;
+      }
+    }
+    this.chunk_map.delete(coord);
+  }
+
 
   // if the camera new chunk coords misalign with our current chunk coords then
   private updateCameraLoc = () => {
     // delete any generated chunks
     for (const [coord, chunk] of this.chunk_map) {
       if (this.shouldBeUnloaded(JSON.parse(coord))) {
-        if (chunk.graphics !== undefined) {
-          this.deleteChunkGraphics(chunk.graphics);
-        }
-        if (chunk.lights !== undefined) {
-          this.freeChunkLightingGPUData.push(chunk.lights.data);
-        }
-        this.chunk_map.delete(coord);
+        this.unloadChunk(coord);
       }
     }
 
@@ -427,7 +500,9 @@ class World {
           const strCoord = JSON.stringify(vec3_add(this.worldChunkCenterLoc, [x, y, z]));
           const chunk = this.chunk_map.get(strCoord);
           if (chunk === undefined) {
-            this.chunk_map.set(strCoord, {})
+            const chunkNumber = this.freeChunkNumbers.pop();
+            assert(chunkNumber !== undefined, "Ran out of chunk numbers! Indicates bug in program");
+            this.chunk_map.set(strCoord, { chunkNumber })
           }
         }
       }
@@ -477,7 +552,7 @@ class World {
     const lightLoc = vec3_add(face.cubeLoc, [0.5, 0.5, 0.5]);
     // note that the near plane starts slightly after the face
     // the far plane is less than the chunk size
-    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.5, 10);
+    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.5, 30);
 
     const up: vec3 = face.face === Face.UP || face.face === Face.DOWN
       ? [-1, 0, 0]
@@ -490,7 +565,8 @@ class World {
     return [lightLoc, lightMvp];
   }
 
-  private updateLightDataTex = (tex: WebGLTexture, lightData: [vec3, mat4][]) => {
+  private updateLightDataTex = (chunkNumber: number, lightData: [vec3, mat4][]) => {
+    assert(lightData.length <= LIGHTS_PER_CHUNK, "too many lights per chunk!");
     // 5 pixels, 4 channels = 20 floats per entry
     const data = new Float32Array(lightData.length * 20);
     for (let i = 0; i < lightData.length; i++) {
@@ -503,13 +579,13 @@ class World {
       data.set(m3, i * 20 + 16);
     }
 
-    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, tex);
+    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.lightDataTexArr);
     this.gl.texSubImage3D(
       this.gl.TEXTURE_2D_ARRAY, //target
       0, // level
       0, // xoffset
       0, // yoffset
-      0, // zoffset
+      chunkNumber * LIGHTS_PER_CHUNK, // zoffset
       5, // width
       1, // height
       lightData.length, // depth
@@ -521,7 +597,6 @@ class World {
 
   // we use a 3d texture to store all of the textures in a cube
   private renderShadowMap = (
-    tex: WebGLTexture,
     fb: WebGLFramebuffer,
     mvpMat: mat4,
     solids: Graphics[]
@@ -650,16 +725,7 @@ class World {
         if (chunk.graphics !== undefined) {
           chunk.graphics.stale = true;
         }
-        // lights for all surrounding chunks will need to rerender
-        if (chunk.lights !== undefined) {
-          chunk.lights.stale = true;
-        }
-        for (const coord of this.neighboringChunkLocs(parsedCoord)) {
-          const chunk = this.chunk_map.get(JSON.stringify(coord));
-          if (chunk && chunk.lights) {
-            chunk.lights.stale = true;
-          }
-        }
+
         current_cost += CHUNK_MESH_COST;
       }
 
@@ -674,49 +740,39 @@ class World {
           transparent: this.createGraphics(writeMesh(chunk.mesh.transparent)),
           stale: false
         }
+
+        // lights for all surrounding chunks will need to rerender
+        if (chunk.ownLights !== undefined) {
+          chunk.ownLights.stale = true;
+        }
+        for (const coord of this.neighboringChunkLocs(parsedCoord)) {
+          const chunk = this.chunk_map.get(JSON.stringify(coord));
+          if (chunk && chunk.ownLights) {
+            chunk.ownLights.stale = true;
+          }
+        }
+
         current_cost += CHUNK_MKGRAPHICS_COST;
       }
 
       if (current_cost > 1) { break CHUNK_UPDATE_LOOP; }
 
-      if (chunk.lights === undefined || chunk.lights.stale) {
-        // all the chunks we'll use
-        const relevantChunkCoords = [
-          coord,
-          ...this.neighboringChunkLocs(parsedCoord).map(x => JSON.stringify(x))
-        ];
-
-        // gather up to LIGHTS_PER_CHUNK lights from each chunk surrounding us
-        const lightData = relevantChunkCoords
-          // grab up to LIGHTS_PER_CHUNK lights from each chunk
-          .flatMap(coord => {
-            const chunk = this.chunk_map.get(coord);
-            if (chunk && chunk.mesh) {
-
-              return chunk.mesh.lights.slice(0, LIGHTS_PER_CHUNK);
-            } else {
-              return [];
-            }
-          })
+      if (chunk.ownLights === undefined || chunk.ownLights.stale) {
+        // only consider lights from this chunk
+        const lightData = chunk.mesh.lights
+          // grab up to LIGHTS_PER_CHUNK lights
+          .slice(0, LIGHTS_PER_CHUNK)
           // create light data for each one
           .map(this.createLightData)
-          ;
 
-        // update data
-        if (chunk.lights === undefined) {
-          const data = this.freeChunkLightingGPUData.pop();
-          if (data === undefined) {
-            continue;
-          }
-          chunk.lights = { data, stale: true, nLights: lightData.length }
-        } else {
-          chunk.lights.nLights = lightData.length;
-        }
+        const nLightsChanged = chunk.ownLights === undefined || chunk.ownLights.lightData.length !== lightData.length;
+
+        chunk.ownLights = { stale: true, lightData }
 
         // only want to render solid part of scene
-        const solidsToRender: Graphics[] = [];
-        for (const coord of relevantChunkCoords) {
-          const chunk = this.chunk_map.get(coord);
+        const solidsToRender: Graphics[] = [chunk.graphics.solid];
+        for (const coord of this.neighboringChunkLocs(parsedCoord)) {
+          const chunk = this.chunk_map.get(JSON.stringify(coord));
           if (chunk && chunk.graphics) {
             solidsToRender.push(chunk.graphics.solid);
           }
@@ -724,15 +780,69 @@ class World {
 
         // now iterate through our graphics map and render world
         for (let i = 0; i < lightData.length; i++) {
-          this.renderShadowMap(chunk.lights.data.shadowTexArr, chunk.lights.data.shadowFbs[i], lightData[i][1], solidsToRender);
+          this.renderShadowMap(this.shadowFbs[chunk.chunkNumber * LIGHTS_PER_CHUNK + i], lightData[i][1], solidsToRender);
         }
 
-        // update light data
-        this.updateLightDataTex(chunk.lights.data.lightDataTexArr, lightData);
+        // update light data for chunk
+        this.updateLightDataTex(chunk.chunkNumber, lightData);
+
+        // if the number of lights changed, we need to update this and the surrounding blocks
+        if (nLightsChanged) {
+          if (chunk.completeLighting !== undefined) {
+            chunk.completeLighting.stale = true;
+          }
+          for (const coord of this.neighboringChunkLocs(parsedCoord)) {
+            const chunk = this.chunk_map.get(JSON.stringify(coord));
+            if (chunk && chunk.completeLighting) {
+              chunk.completeLighting.stale = true;
+            }
+          }
+        }
 
         // mark not stale
-        chunk.lights.stale = false;
+        chunk.ownLights.stale = false;
         current_cost += CHUNK_RENDERLIGHT_COST;
+      }
+
+      if (current_cost > 1) { break CHUNK_UPDATE_LOOP; }
+
+      if (chunk.completeLighting === undefined || chunk.completeLighting.stale) {
+        // attempt to acquire lighting data
+        if (chunk.completeLighting === undefined) {
+          const data = this.freeChunkLightingGPUData.pop();
+          assert(data !== undefined, "Ran out of GPU Data! Indicates bug in program");
+          chunk.completeLighting = { stale: true, data }
+        }
+
+        const data = new Int32Array(27 * 3);
+
+        let i = 0;
+        for (const c of [parsedCoord, ...this.neighboringChunkLocs(parsedCoord)]) {
+          const chunk = this.chunk_map.get(JSON.stringify(c));
+          if (chunk?.ownLights !== undefined) {
+            const k = chunk.chunkNumber * LIGHTS_PER_CHUNK;
+            data[i + 0] = k;
+            data[i + 1] = k + chunk.ownLights.lightData.length;
+            data[i + 2] = 1;
+            i += 3;
+          }
+        }
+
+        this.gl.bindTexture(this.gl.TEXTURE_2D, chunk.completeLighting.data.lightIndexesTex);
+        this.gl.texSubImage2D(
+          this.gl.TEXTURE_2D, //target
+          0, // level
+          0, // xoffset
+          0, // yoffset
+          27, // width
+          1, // height
+          this.gl.RGB_INTEGER, // format
+          this.gl.INT, // type
+          data, // pixels
+        );
+
+        chunk.completeLighting.stale = false
+        current_cost += CHUNK_LIGHTINDEX_COST;
       }
 
       if (current_cost > 1) { break CHUNK_UPDATE_LOOP; }
@@ -760,10 +870,6 @@ class World {
     // bind matrix
     this.gl.uniformMatrix4fv(this.renderMvpMatLoc, false, mat4_to_uniform(mvpMat));
 
-    // bind the texture 0 to render atlas
-    this.gl.activeTexture(this.gl.TEXTURE0);
-    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.textureAtlas);
-
     this.gl.enable(this.gl.DEPTH_TEST); // enable depth tests
     this.gl.enable(this.gl.CULL_FACE) // remove reversed faces
     this.gl.enable(this.gl.BLEND) // enable blending
@@ -772,21 +878,26 @@ class World {
     this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
+    // bind the texture 0 to render atlas
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.textureAtlas);
+
+    // bind the texture 1 to shadow
+    this.gl.activeTexture(this.gl.TEXTURE1);
+    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.shadowTexArr);
+
+    // bind this light data to tex 2
+    this.gl.activeTexture(this.gl.TEXTURE2);
+    this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.lightDataTexArr);
+
     for (const chunk of this.chunk_map.values()) {
-      if (chunk.graphics !== undefined && chunk.lights !== undefined) {
+      if (chunk.graphics !== undefined && chunk.completeLighting !== undefined) {
         // bind this chunk's vertex array
         this.gl.bindVertexArray(chunk.graphics.solid.vao);
 
-        // set n lights correctly
-        this.gl.uniform1i(this.renderLightNumber, chunk.lights.nLights);
-
-        // bind this chunk's light depths to tex 1
-        this.gl.activeTexture(this.gl.TEXTURE1);
-        this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, chunk.lights.data.shadowTexArr);
-
-        // bind this chunk's light data to tex 2
-        this.gl.activeTexture(this.gl.TEXTURE2);
-        this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, chunk.lights.data.lightDataTexArr);
+        // bind light index to texture 3
+        this.gl.activeTexture(this.gl.TEXTURE3);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, chunk.completeLighting.data.lightIndexesTex);
 
         // draw arrays
         this.gl.drawArrays(this.gl.TRIANGLES, 0, chunk.graphics.solid.vertexCount);
@@ -1034,7 +1145,7 @@ function genChunkData(worldChunkCoords: vec3, noise: (x: number, y: number, z: n
     }
   }
 
-  //blocks[CHUNK_X_SIZE - 2] = 5;
+  blocks[0] = 5;
 
   return blocks;
 }
@@ -1264,10 +1375,5 @@ function writeMesh(faces: BlockFace[]): Float32Array {
   }
   return data;
 }
-
-const createChunkLightingGPUData = (gl: WebGL2RenderingContext): ChunkLightingGPUData => {
-}
-
-
 
 export default World;

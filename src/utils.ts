@@ -167,7 +167,7 @@ export function clamp(v: number, min: number, max: number) {
   return Math.min(Math.max(v, min), max);
 }
 
-export function assert(cond: boolean, error: string) {
+export function assert(cond: boolean, error: string): asserts cond {
   if (!cond) {
     throw new Error(error)
   }
