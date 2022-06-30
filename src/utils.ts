@@ -121,12 +121,12 @@ export function mat4_mul(a: mat4, b: mat4): mat4 {
   ];
 }
 
-export function vec4_extend_vec3(xyz:vec3, w:number):vec4 {
-    return [xyz[0], xyz[1], xyz[2], w]
+export function vec4_extend_vec3(xyz: vec3, w: number): vec4 {
+  return [xyz[0], xyz[1], xyz[2], w]
 }
 
-export function vec3_truncate_vec4(xyzw:vec4):vec3 {
-    return [xyzw[0], xyzw[1], xyzw[2]]
+export function vec3_truncate_vec4(xyzw: vec4): vec3 {
+  return [xyzw[0], xyzw[1], xyzw[2]]
 }
 
 export function mat4_vec_mul(a: mat4, v: vec4): vec4 {
@@ -183,7 +183,7 @@ export function mod(n: number, d: number) {
 }
 
 // takes in color as a hexadecimal number, returns a vec3 of color components
-export function convertColor(color: number):vec3 {
+export function convertColor(color: number): vec3 {
   return [
     (color >> 16) / 0xFF,
     ((color >> 8) & 0xFF) / 0xFF,
@@ -192,4 +192,6 @@ export function convertColor(color: number):vec3 {
 }
 
 
-
+export function zip<T, U>(a: T[], b: U[]): [T|undefined, U|undefined][] {
+  return Array(Math.max(b.length, a.length)).fill(undefined).map((_, i) => [a[i], b[i]])
+}
