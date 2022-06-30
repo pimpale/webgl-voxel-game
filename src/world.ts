@@ -14,20 +14,20 @@ const CHUNK_MKGRAPHICS_COST = 1;
 const CHUNK_RENDERLIGHT_COST = 1;
 const CHUNK_LIGHTINDEX_COST = 1;
 
-const CHUNK_X_SIZE = 16;
-const CHUNK_Y_SIZE = 16;
-const CHUNK_Z_SIZE = 16;
+const CHUNK_X_SIZE = 32;
+const CHUNK_Y_SIZE = 32;
+const CHUNK_Z_SIZE = 32;
 
 
 // if a loaded chunk is farther than the player than this, we unload it
-const MAX_RENDER_RADIUS_X = 4;
-const MAX_RENDER_RADIUS_Y = 4;
-const MAX_RENDER_RADIUS_Z = 4;
+const MAX_RENDER_RADIUS_X = 2;
+const MAX_RENDER_RADIUS_Y = 2;
+const MAX_RENDER_RADIUS_Z = 2;
 
 // if an unloaded chunk is closer than this, then we load it
-const MIN_RENDER_RADIUS_X = 3;
-const MIN_RENDER_RADIUS_Y = 3;
-const MIN_RENDER_RADIUS_Z = 3;
+const MIN_RENDER_RADIUS_X = 1;
+const MIN_RENDER_RADIUS_Y = 1;
+const MIN_RENDER_RADIUS_Z = 1;
 
 
 type Graphics = {
@@ -51,7 +51,7 @@ type ChunkLightingGPUData = {
   lightIndexesTex: WebGLTexture,
 }
 
-const SHADOWMAP_SIZE = 256;
+const SHADOWMAP_SIZE = 512;
 
 const N_LIGHTS = 1024;
 
@@ -145,7 +145,7 @@ void main() {
     vec2 texCoord = (projectedCoord.xy + vec2(1.0, 1.0))/2.0;
 
     float depthMapDepth = texture(u_lightDepthArr, vec3(texCoord, i)).r;
-    const float bias = 0.005;
+    const float bias = 0.002;
     float currentDepth = (projectedCoord.z + 1.0)/2.0 - bias;
 
     if(inRange && currentDepth <= depthMapDepth) {
