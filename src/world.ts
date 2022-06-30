@@ -14,20 +14,20 @@ const CHUNK_MKGRAPHICS_COST = 1;
 const CHUNK_RENDERLIGHT_COST = 1;
 const CHUNK_LIGHTINDEX_COST = 1;
 
-const CHUNK_X_SIZE = 32;
-const CHUNK_Y_SIZE = 32;
-const CHUNK_Z_SIZE = 32;
+const CHUNK_X_SIZE = 16;
+const CHUNK_Y_SIZE = 16;
+const CHUNK_Z_SIZE = 16;
 
 
 // if a loaded chunk is farther than the player than this, we unload it
-const MAX_RENDER_RADIUS_X = 2;
-const MAX_RENDER_RADIUS_Y = 2;
-const MAX_RENDER_RADIUS_Z = 2;
+const MAX_RENDER_RADIUS_X = 4;
+const MAX_RENDER_RADIUS_Y = 4;
+const MAX_RENDER_RADIUS_Z = 4;
 
 // if an unloaded chunk is closer than this, then we load it
-const MIN_RENDER_RADIUS_X = 1;
-const MIN_RENDER_RADIUS_Y = 1;
-const MIN_RENDER_RADIUS_Z = 1;
+const MIN_RENDER_RADIUS_X = 3;
+const MIN_RENDER_RADIUS_Y = 3;
+const MIN_RENDER_RADIUS_Z = 3;
 
 
 type Graphics = {
@@ -53,7 +53,7 @@ type ChunkLightingGPUData = {
 
 const SHADOWMAP_SIZE = 256;
 
-const N_LIGHTS = 2048;
+const N_LIGHTS = 1024;
 
 const vs = `#version 300 es
 precision highp int;
@@ -439,6 +439,9 @@ class World {
     if (chunk.graphics !== undefined) {
       this.deleteChunkGraphics(chunk.graphics);
     }
+    if (chunk.ownLights !== undefined) {
+      this.freeLightIndexes.push(...chunk.ownLights.lightData.map(x => x.index));
+    }
     if (chunk.completeLighting !== undefined) {
       this.deleteGPUData(chunk.completeLighting.data);
     }
@@ -806,9 +809,12 @@ class World {
           chunk.completeLighting = { stale: true, data: { lightIndexesTex: this.gl.createTexture()! } }
         }
 
+        // get list of light indexes from neighboring chunks
         const lightIndexes = [parsedCoord, ...this.neighboringChunkLocs(parsedCoord)]
           .map(c => this.chunk_map.get(JSON.stringify(c))?.ownLights?.lightData)
           .flatMap(ld => ld === undefined ? [] : ld.map(x => x.index));
+
+        console.log(lightIndexes);
 
         // translate to array
         const data = new Int32Array(lightIndexes.length * 2);
