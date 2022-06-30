@@ -14,9 +14,9 @@ const CHUNK_MKGRAPHICS_COST = 1;
 const CHUNK_RENDERLIGHT_COST = 1;
 const CHUNK_LIGHTINDEX_COST = 1;
 
-const CHUNK_X_SIZE = 32;
-const CHUNK_Y_SIZE = 32;
-const CHUNK_Z_SIZE = 32;
+const CHUNK_X_SIZE = 16;
+const CHUNK_Y_SIZE = 16;
+const CHUNK_Z_SIZE = 16;
 
 
 // if a loaded chunk is farther than the player than this, we unload it
@@ -44,7 +44,6 @@ type Chunk = {
   completeLighting?: { stale: boolean, data: ChunkLightingGPUData }
 }
 
-// these should not get deleted! they merely transfer ownership (to avoid the massive costs of creation/deletion)
 type ChunkLightingGPUData = {
   // 1xN texture,
   // r channel = index,
@@ -112,15 +111,8 @@ void main() {
   float lightSum = 0.2;
 
   int nLights = textureSize(u_lightIndexes, 0).x;
-
   for(int c = 0; c < nLights; c++) {
-    ivec2 lightIndexData = texelFetch(u_lightIndexes, ivec2(c, 0), 0).xy;
-    // if marked empty, skip chunk
-    if(lightIndexData.y == 0) {
-        break;
-    }
-
-    int i = lightIndexData.x;
+    int i = texelFetch(u_lightIndexes, ivec2(c, 0), 0).x;
 
     // get light position from texture
     vec3 lightPos = texelFetch(u_lightDataArr, ivec3(0, 0, i), 0).rgb;
@@ -172,9 +164,7 @@ void main() {
 
 const shadow_fs = `#version 300 es
 precision highp float;
-in vec3 v_tuv;
 out vec4 v_outColor;
-
 void main() {
   v_outColor = vec4(0.0, 0.0, 0.0, 1.0);
 }
@@ -523,7 +513,7 @@ class World {
     const lightLoc = vec3_add(face.cubeLoc, [0.5, 0.5, 0.5]);
     // note that the near plane starts slightly after the face
     // the far plane is less than the chunk size
-    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.5, 30);
+    const projectionMat = mat4_perspective(RADIANS(90.0), 1, 0.5, 10);
 
     const up: vec3 = face.face === Face.UP || face.face === Face.DOWN
       ? [-1, 0, 0]
@@ -816,26 +806,17 @@ class World {
 
         console.log(lightIndexes);
 
-        // translate to array
-        const data = new Int32Array(lightIndexes.length * 2);
-        let i = 0;
-        for (const lightIndex of lightIndexes) {
-          data[i + 0] = lightIndex;
-          data[i + 1] = 1;
-          i += 2;
-        }
-
         this.gl.bindTexture(this.gl.TEXTURE_2D, chunk.completeLighting.data.lightIndexesTex);
         this.gl.texImage2D(
           this.gl.TEXTURE_2D,
           0,                   // mip level
-          this.gl.RG32I,       // internal format
+          this.gl.R32I,       // internal format
           lightIndexes.length, // width
           1, //height
           0,                    // border
-          this.gl.RG_INTEGER,   // format
+          this.gl.RED_INTEGER,   // format
           this.gl.INT,  // type
-          data
+          new Int32Array(lightIndexes) // data
         );
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
