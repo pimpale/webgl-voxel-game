@@ -1,3 +1,9 @@
+# WebGL Voxel Clone
+<p align="middle">
+    <img src="assets/cs174a_project_screenshot1.png" width=600>
+    <img src="assets/cs174a_project_screenshot2.png" width=600>
+</p>
+
 ## How to run the code:
 * npm install
 * npm run start
